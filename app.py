@@ -16,6 +16,15 @@ import pandas as pd
 from io import BytesIO
 import re
 import time
+import requests
+
+# Import enrichissement RNE
+try:
+    from enrichment_hybrid import enrich_from_api_dinum_and_rne, enrich_batch_parallel
+    RNE_AVAILABLE = True
+except ImportError:
+    RNE_AVAILABLE = False
+    print("⚠️ Module enrichment_hybrid non disponible")
 
 st.set_page_config(
     page_title="Recherche d'Entreprises",
@@ -253,9 +262,15 @@ def search_company_api(query):
     return None
 
 
-def extract_financial_info(company_data, original_siret=None):
+def extract_financial_info(company_data, original_siret=None, rne_data=None):
     """Extract comprehensive information from company data including financial, 
-    legal, geographic, and leadership data."""
+    legal, geographic, and leadership data.
+    
+    Args:
+        company_data: Données de l'API DINUM
+        original_siret: SIRET original de la requête
+        rne_data: Données financières RNE (optionnel)
+    """
     
     # Base structures
     finances = company_data.get("finances") or {}
@@ -269,13 +284,29 @@ def extract_financial_info(company_data, original_siret=None):
     # SIREN verification status
     siren_verifie = "✅ Vérifié" if siren and siren != "N/A" else "❌ Non trouvé"
     
-    # Financial data - récupérer l'année la plus récente
+    # Financial data - utiliser RNE en priorité si disponible, sinon DINUM
     ca = "N/A"
     resultat_net = "N/A"
     annee_finance = "N/A"
     finances_publiees = "Non"
+    nb_exercices_rne = 0
+    source_finances = "N/A"
     
-    if finances:
+    # Priorité aux données RNE si disponibles
+    if rne_data and rne_data.get("success"):
+        bilans = rne_data.get("bilans", [])
+        if bilans:
+            # Prendre le bilan le plus récent
+            latest_bilan = bilans[0]
+            annee_finance = latest_bilan.get("date_cloture", "N/A")
+            ca = latest_bilan.get("chiffre_affaires"
+, "N/A")
+            resultat_net = latest_bilan.get("resultat_net", "N/A")
+            nb_exercices_rne = len(bilans)
+            finances_publiees = "Oui"
+            source_finances = f"RNE ({nb_exercices_rne} exercice(s))"
+    # Sinon, utiliser les données DINUM
+    elif finances:
         # L'API retourne un dict avec l'année comme clé: {"2024": {"ca": ..., "resultat_net": ...}}
         latest_year = max(finances.keys()) if finances else None
         if latest_year:
@@ -284,6 +315,7 @@ def extract_financial_info(company_data, original_siret=None):
             ca = year_data.get("ca", "N/A")
             resultat_net = year_data.get("resultat_net", "N/A")
             finances_publiees = "Oui"
+            source_finances = "API DINUM"
     
     # Dirigeants - formater la liste
     dirigeants_str = "N/A"
@@ -350,9 +382,11 @@ def extract_financial_info(company_data, original_siret=None):
         
         # Finances
         "Données financières publiées": finances_publiees,
+        "Source finances": source_finances,
         "Année finances": annee_finance,
         "Chiffre d'affaires (CA)": _format_currency(ca),
         "Résultat net": _format_currency(resultat_net),
+        "Nb exercices (RNE)": nb_exercices_rne if nb_exercices_rne > 0 else "N/A",
         
         # Localisation
         "Adresse siège": siege.get("geo_adresse", siege.get("adresse", "N/A")),
@@ -394,7 +428,7 @@ def _format_currency(value):
 
 
 def process_companies(queries):
-    """Process multiple company queries.
+    """Process multiple company queries with optimized batch processing for large volumes.
     
     Args:
         queries: List of strings (company names) or tuples (name, siret/siren)
@@ -402,65 +436,182 @@ def process_companies(queries):
     results = []
     total = len(queries)
     
-    # Estimation du temps si on utilise l'API
-    if USE_API and total > 1:
-        estimated_time = total * API_DELAY_SECONDS
-        if estimated_time > 5:
-            st.info(f"⏱️ Traitement de {total} entreprise(s). "
-                   f"Temps estimé : ~{int(estimated_time)} secondes "
-                   f"(rate limiting API respecté)")
-
-    for idx, query_data in enumerate(queries, 1):
-        # query_data peut être un string ou un tuple (nom, siret/siren)
-        if isinstance(query_data, tuple):
-            name, siret_siren = query_data
-            # Utiliser le SIRET/SIREN en priorité s'il existe
-            query = siret_siren.strip() if siret_siren and str(siret_siren).strip() and str(siret_siren).strip() != 'nan' else name.strip()
-            display_name = name if name and str(name).strip() and str(name).strip() != 'nan' else query
-        else:
-            query = query_data.strip()
-            display_name = query
-            
-        if not query:
-            continue
-
-        # Progress indicator pour les gros fichiers
-        if total > 5:
-            progress_text = f"({idx}/{total})"
-        else:
-            progress_text = ""
-            
-        with st.spinner(f"Recherche {progress_text} '{display_name}'..."):
-            company_data = None
-            original_siret = query if is_siret(query) else None
-
-            # Recherche via l'API publique
-            company_data = search_company_api(query)
-
-            if company_data:
-                info = extract_financial_info(company_data, original_siret)
-                results.append(info)
+    # Seuil pour activer le mode batch optimisé
+    BATCH_THRESHOLD = 50
+    use_batch_mode = (total >= BATCH_THRESHOLD and 
+                      'use_rne' in st.session_state and 
+                      st.session_state.use_rne and 
+                      RNE_AVAILABLE)
+    
+    # MODE BATCH OPTIMISÉ pour gros volumes avec RNE
+    if use_batch_mode:
+        st.info(f"🚀 **Mode d'optimisation activé** pour {total} entreprises")
+        st.markdown("""
+        **Traitement par lots optimisé :**
+        - 📊 Phase 1: Récupération des SIRENs via API DINUM
+        - 📦 Phase 2: Tri et regroupement par fichier RNE
+        - ⚡ Phase 3: Téléchargement parallèle (3 fichiers max simultanés)
+        - 🗑️ Nettoyage automatique après chaque lot
+        """)
+        
+        # Phase 1: Récupération des SIRENs
+        st.markdown("### 📊 Phase 1: Identification des entreprises")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        company_mapping = {}  # {siren: (company_data, original_query)}
+        queries_without_siren = []  # Entreprises non trouvées
+        
+        for idx, query_data in enumerate(queries, 1):
+            if isinstance(query_data, tuple):
+                name, siret_siren = query_data
+                query = siret_siren.strip() if siret_siren and str(siret_siren).strip() and str(siret_siren).strip() != 'nan' else name.strip()
+                display_name = name if name and str(name).strip() and str(name).strip() != 'nan' else query
             else:
-                # Record as not found with the original query
-                results.append({
-                    "SIRET": original_siret or "N/A",
-                    "SIREN": extract_siren_from_siret(query)
-                            if is_siret(query) else "N/A",
-                    "Vérification SIREN": "❌ Non trouvé",
-                    "Nom": f"Non trouvé ({query})",
-                    "État administratif": "N/A",
-                    "Catégorie": "N/A",
-                    "Nature juridique": "N/A",
-                    "Activité principale": "N/A",
-                    "Effectif salarié": "N/A",
-                    "Nombre d'établissements": "N/A",
-                    "Date de création": "N/A",
-                    "Chiffre d'affaires (CA)": "N/A",
-                    "Résultat net": "N/A",
-                    "Date clôture exercice": "N/A",
-                    "Adresse siège": "N/A",
-                })
-                st.warning(f"⚠️ Entreprise '{query}' non trouvée")
+                query = query_data.strip()
+                display_name = query
+            
+            if not query:
+                continue
+            
+            status_text.text(f"Recherche {idx}/{total}: {display_name[:50]}...")
+            progress_bar.progress(idx / total)
+            
+            original_siret = query if is_siret(query) else None
+            company_data = search_company_api(query)
+            
+            if company_data and company_data.get("siren"):
+                siren = company_data["siren"]
+                company_mapping[siren] = (company_data, original_siret, display_name)
+            else:
+                queries_without_siren.append((query, display_name, original_siret))
+        
+        status_text.text(f"✅ Phase 1 terminée: {len(company_mapping)} entreprises identifiées")
+        
+        # Phase 2 & 3: Enrichissement RNE par lots
+        if company_mapping:
+            st.markdown("### 📦 Phase 2-3: Enrichissement RNE par lots")
+            
+            sirens_list = list(company_mapping.keys())
+            
+            # Callback pour afficher la progression
+            batch_progress = st.progress(0)
+            batch_status = st.empty()
+            
+            def progress_callback(completed, total_files, current_file):
+                batch_progress.progress(completed / total_files)
+                batch_status.text(f"📦 Fichiers traités: {completed}/{total_files} - Actuel: {current_file}")
+            
+            # Traitement par lots parallèle
+            rne_results = enrich_batch_parallel(
+                sirens_list, 
+                max_bilans=10, 
+                max_workers=3,
+                progress_callback=progress_callback
+            )
+            
+            batch_status.text(f"✅ Enrichissement RNE terminé: {len([r for r in rne_results.values() if r.get('success')])} réussis")
+            
+            # Fusion des données
+            for siren, (company_data, original_siret, display_name) in company_mapping.items():
+                rne_data = rne_results.get(siren)
+                info = extract_financial_info(company_data, original_siret, rne_data)
+                results.append(info)
+        
+        # Ajouter les entreprises non trouvées
+        for query, display_name, original_siret in queries_without_siren:
+            results.append({
+                "SIRET": original_siret or "N/A",
+                "SIREN": extract_siren_from_siret(query) if is_siret(query) else "N/A",
+                "Vérification SIREN": "❌ Non trouvé",
+                "Nom": f"Non trouvé ({query})",
+                "État administratif": "N/A",
+                "Catégorie": "N/A",
+                "Nature juridique": "N/A",
+                "Activité principale": "N/A",
+                "Effectif salarié": "N/A",
+                "Nombre d'établissements": "N/A",
+                "Date de création": "N/A",
+                "Chiffre d'affaires (CA)": "N/A",
+                "Résultat net": "N/A",
+                "Date clôture exercice": "N/A",
+                "Adresse siège": "N/A",
+            })
+        
+        st.success(f"✅ **Traitement terminé** : {len(results)} entreprises traitées")
+        
+    # MODE STANDARD pour petits volumes
+    else:
+        # Estimation du temps si on utilise l'API
+        if USE_API and total > 1:
+            estimated_time = total * API_DELAY_SECONDS
+            if estimated_time > 5:
+                st.info(f"⏱️ Traitement de {total} entreprise(s). "
+                       f"Temps estimé : ~{int(estimated_time)} secondes "
+                       f"(rate limiting API respecté)")
+
+        for idx, query_data in enumerate(queries, 1):
+            # query_data peut être un string ou un tuple (nom, siret/siren)
+            if isinstance(query_data, tuple):
+                name, siret_siren = query_data
+                # Utiliser le SIRET/SIREN en priorité s'il existe
+                query = siret_siren.strip() if siret_siren and str(siret_siren).strip() and str(siret_siren).strip() != 'nan' else name.strip()
+                display_name = name if name and str(name).strip() and str(name).strip() != 'nan' else query
+            else:
+                query = query_data.strip()
+                display_name = query
+                
+            if not query:
+                continue
+
+            # Progress indicator pour les gros fichiers
+            if total > 5:
+                progress_text = f"({idx}/{total})"
+            else:
+                progress_text = ""
+                
+            with st.spinner(f"Recherche {progress_text} '{display_name}'..."):
+                company_data = None
+                original_siret = query if is_siret(query) else None
+
+                # Recherche via l'API publique
+                company_data = search_company_api(query)
+
+                if company_data:
+                    # Enrichissement RNE si activé (mode simple)
+                    rne_data = None
+                    if 'use_rne' in st.session_state and st.session_state.use_rne:
+                        siren = company_data.get("siren")
+                        if siren and RNE_AVAILABLE:
+                            try:
+                                with st.spinner(f"🏛️ Enrichissement RNE pour {siren}..."):
+                                    rne_data = enrich_from_api_dinum_and_rne(siren, max_bilans=10)
+                            except Exception as e:
+                                st.warning(f"⚠️ Erreur enrichissement RNE pour {siren}: {str(e)}")
+                    
+                    info = extract_financial_info(company_data, original_siret, rne_data)
+                    results.append(info)
+                else:
+                    # Record as not found with the original query
+                    results.append({
+                        "SIRET": original_siret or "N/A",
+                        "SIREN": extract_siren_from_siret(query)
+                                if is_siret(query) else "N/A",
+                        "Vérification SIREN": "❌ Non trouvé",
+                        "Nom": f"Non trouvé ({query})",
+                        "État administratif": "N/A",
+                        "Catégorie": "N/A",
+                        "Nature juridique": "N/A",
+                        "Activité principale": "N/A",
+                        "Effectif salarié": "N/A",
+                        "Nombre d'établissements": "N/A",
+                        "Date de création": "N/A",
+                        "Chiffre d'affaires (CA)": "N/A",
+                        "Résultat net": "N/A",
+                        "Date clôture exercice": "N/A",
+                        "Adresse siège": "N/A",
+                    })
+                    st.warning(f"⚠️ Entreprise '{query}' non trouvée")
 
     return results
 
@@ -652,7 +803,8 @@ def display_results(results, section_key=""):
                         st.markdown(f"- **État:** {result.get('État administratif', 'N/A')}")
                         
                         st.markdown("**💰 Finances**")
-                        st.markdown(f"- **CA:** {result.get('Chiffre d\\'affaires (CA)', 'N/A')}")
+                        ca_value = result.get("Chiffre d'affaires (CA)", 'N/A')
+                        st.markdown(f"- **CA:** {ca_value}")
                         st.markdown(f"- **Résultat:** {result.get('Résultat net', 'N/A')}")
                         st.markdown(f"- **Année:** {result.get('Année finances', 'N/A')}")
                     
@@ -665,7 +817,8 @@ def display_results(results, section_key=""):
                         st.markdown("**👥 Organisation**")
                         st.markdown(f"- **Effectif:** {result.get('Effectif salarié', 'N/A')}")
                         st.markdown(f"- **Catégorie:** {result.get('Catégorie', 'N/A')}")
-                        st.markdown(f"- **Établissements:** {result.get('Nombre d\\'établissements', 'N/A')}")
+                        nb_etab = result.get("Nombre d'établissements", 'N/A')
+                        st.markdown(f"- **Établissements:** {nb_etab}")
             
             if len(results) > 5:
                 st.info(f"💡 {len(results) - 5} autres entreprises disponibles dans la vue tableau")
@@ -847,6 +1000,52 @@ with st.sidebar:
         st.metric("⏱️ Délai", f"{API_DELAY_SECONDS}s")
     with col_b:
         st.metric("🔄 Tentatives", API_MAX_RETRIES)
+    
+    st.markdown("---")
+    
+    # Option d'enrichissement RNE
+    st.markdown("### 🏛️ Enrichissement RNE")
+    
+    if RNE_AVAILABLE:
+        use_rne = st.checkbox(
+            "📊 Activer enrichissement FTP/RNE",
+            value=False,
+            help="Récupère les données financières sur plusieurs années depuis le serveur FTP RNE (INPI)",
+            key="use_rne"  # Stocké dans session_state
+        )
+        
+        if use_rne:
+            st.success("""
+            ✅ **Enrichissement RNE activé**
+            
+            📈 Données sur **plusieurs années**
+            💾 Cache local (rapide)
+            🔄 Téléchargement à la demande
+            """)
+            
+            st.info("""
+            **🚀 Mode optimisé pour gros volumes**
+            
+            À partir de 50 entreprises :
+            - 📦 Tri par fichiers RNE
+            - ⚡ Traitement parallèle (3 fichiers max)
+            - 🗑️ Nettoyage automatique
+            - 💾 Économie d'espace disque
+            """)
+        else:
+            st.info("""
+            💡 **Enrichissement RNE disponible**
+            
+            Activez pour obtenir l'historique complet des finances.
+            """)
+    else:
+        st.warning("""
+        ⚠️ **Module RNE non disponible**
+        
+        Pour l'activer, vérifiez enrichment_hybrid.py
+        """)
+        if "use_rne" not in st.session_state:
+            st.session_state.use_rne = False
     
     st.markdown("---")
     

@@ -11,6 +11,7 @@ rne_siren_index.json
 *.log
 index_creation.log
 index_ranges_creation.log
+streamlit.pid
 
 # Python
 __pycache__/
