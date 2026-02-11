@@ -20,15 +20,136 @@ import time
 st.set_page_config(
     page_title="Recherche d'Entreprises",
     page_icon="🏢",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.title("🏢 Recherche d'Entreprises Françaises")
-st.markdown("**Recherchez des entreprises par nom** — le SIRET/SIREN est optionnel pour plus de précision")
-st.info("💡 **API publique et gratuite** — Aucune authentification requise ! "
-        "Cette application utilise l'API ouverte de l'État français.")
-st.warning("⚠️ **Données financières** : Seules 10-20% des entreprises publient leurs comptes (GE, ETI, sociétés cotées). "
-           "Les PME < 50 salariés ne sont pas obligées de publier. C'est normal si beaucoup de résultats affichent 'N/A'.")
+# CSS personnalisé pour un design moderne
+st.markdown("""
+<style>
+    /* En-tête avec gradient */
+    .main-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem;
+        border-radius: 15px;
+        color: white;
+        text-align: center;
+        margin-bottom: 2rem;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    }
+    
+    .main-header h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+    
+    .main-header p {
+        font-size: 1.1rem;
+        opacity: 0.95;
+    }
+    
+    /* Cards stylées */
+    .info-card {
+        background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border-left: 5px solid #2196F3;
+        margin: 1rem 0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.07);
+    }
+    
+    .warning-card {
+        background: linear-gradient(135deg, #FFF3E0 0%, #FFE0B2 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        border-left: 5px solid #FF9800;
+        margin: 1rem 0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.07);
+    }
+    
+    /* Tabs améliorés */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background-color: #f0f2f6;
+        border-radius: 10px 10px 0 0;
+        padding: 10px 20px;
+        font-weight: 600;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white !important;
+    }
+    
+    /* Boutons améliorés */
+    .stButton > button {
+        border-radius: 25px;
+        padding: 0.6rem 2rem;
+        font-weight: 600;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    
+    /* DataFrames stylés */
+    .dataframe {
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    
+    /* Sidebar amélioré */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+    
+    /* Métriques stylées */
+    [data-testid="stMetricValue"] {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #667eea;
+    }
+    
+    /* Success messages */
+    .element-container .stSuccess {
+        background: linear-gradient(135deg, #C8E6C9 0%, #A5D6A7 100%);
+        border-radius: 10px;
+        border-left: 5px solid #4CAF50;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# En-tête moderne
+st.markdown("""
+<div class="main-header">
+    <h1>🏢 Recherche d'Entreprises Françaises</h1>
+    <p>Explorez les données officielles des entreprises françaises en quelques clics</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Informations avec cards stylées
+st.markdown("""
+<div class="info-card">
+    <strong>💡 API Publique et Gratuite</strong><br>
+    Aucune authentification requise ! Cette application utilise l'API ouverte de l'État français pour vous fournir des données officielles et à jour.
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="warning-card">
+    <strong>⚠️ Note sur les données financières</strong><br>
+    Seules 10-20% des entreprises publient leurs comptes (GE, ETI, sociétés cotées). 
+    Les PME de moins de 50 salariés ne sont pas obligées de publier. Il est normal que beaucoup de résultats affichent 'N/A'.
+</div>
+""", unsafe_allow_html=True)
 
 # Check if we can import requests
 try:
@@ -464,34 +585,105 @@ def display_results(results, section_key=""):
         for col in df.columns:
             df[col] = df[col].astype(str)
 
-        # Display results
-        st.markdown("### 📊 Résultats — Données enrichies")
-        st.markdown("*Données d'identification, financières, géographiques, dirigeants et certifications*")
-        st.dataframe(df, use_container_width=True)
-
-        # Summary
+        # Summary avec métriques visuelles
         verified = sum(1 for r in results
                        if r.get("Vérification SIREN") == "✅ Vérifié")
         not_found = len(results) - verified
         with_finances = sum(1 for r in results
                            if r.get("Données financières publiées") == "Oui")
         
-        st.markdown(
-            f"**Résumé :** {verified} SIREN vérifié(s), "
-            f"{not_found} non trouvé(s) sur {len(results)} entrée(s) | "
-            f"💰 {with_finances} avec données financières ({(with_finances/len(results)*100):.0f}%)")
+        # En-tête avec métriques
+        st.markdown("---")
+        st.markdown("### 📊 Résultats de la Recherche")
+        
+        # Métriques en colonnes
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                label="🏢 Total",
+                value=len(results),
+                delta="entreprises"
+            )
+        
+        with col2:
+            st.metric(
+                label="✅ Vérifiées",
+                value=verified,
+                delta=f"{(verified/len(results)*100):.0f}%" if results else "0%"
+            )
+        
+        with col3:
+            st.metric(
+                label="💰 Avec finances",
+                value=with_finances,
+                delta=f"{(with_finances/len(results)*100):.0f}%" if results else "0%"
+            )
+        
+        with col4:
+            st.metric(
+                label="❌ Non trouvées",
+                value=not_found,
+                delta=f"{(not_found/len(results)*100):.0f}%" if results else "0%",
+                delta_color="inverse"
+            )
+        
+        st.markdown("---")
+        
+        # Affichage avec tabs pour différentes vues
+        tab_table, tab_cards = st.tabs(["📋 Vue Tableau", "🎴 Vue Cartes"])
+        
+        with tab_table:
+            st.markdown("*Données complètes : identification, finances, géographie, dirigeants et certifications*")
+            st.dataframe(df, use_container_width=True, height=500)
+        
+        with tab_cards:
+            # Vue en cartes pour les premières entreprises
+            st.markdown("*Vue détaillée des premières entreprises*")
+            for idx, result in enumerate(results[:5]):  # Limiter à 5 pour la vue carte
+                with st.expander(f"🏢 {result.get('Nom', 'N/A')}", expanded=(idx==0)):
+                    col_a, col_b = st.columns(2)
+                    
+                    with col_a:
+                        st.markdown("**🔍 Identification**")
+                        st.markdown(f"- **SIREN:** {result.get('SIREN', 'N/A')}")
+                        st.markdown(f"- **SIRET:** {result.get('SIRET', 'N/A')}")
+                        st.markdown(f"- **Statut:** {result.get('Vérification SIREN', 'N/A')}")
+                        st.markdown(f"- **État:** {result.get('État administratif', 'N/A')}")
+                        
+                        st.markdown("**💰 Finances**")
+                        st.markdown(f"- **CA:** {result.get('Chiffre d\\'affaires (CA)', 'N/A')}")
+                        st.markdown(f"- **Résultat:** {result.get('Résultat net', 'N/A')}")
+                        st.markdown(f"- **Année:** {result.get('Année finances', 'N/A')}")
+                    
+                    with col_b:
+                        st.markdown("**📍 Localisation**")
+                        st.markdown(f"- **Adresse:** {result.get('Adresse siège', 'N/A')}")
+                        st.markdown(f"- **Ville:** {result.get('Commune', 'N/A')}")
+                        st.markdown(f"- **Région:** {result.get('Région', 'N/A')}")
+                        
+                        st.markdown("**👥 Organisation**")
+                        st.markdown(f"- **Effectif:** {result.get('Effectif salarié', 'N/A')}")
+                        st.markdown(f"- **Catégorie:** {result.get('Catégorie', 'N/A')}")
+                        st.markdown(f"- **Établissements:** {result.get('Nombre d\\'établissements', 'N/A')}")
+            
+            if len(results) > 5:
+                st.info(f"💡 {len(results) - 5} autres entreprises disponibles dans la vue tableau")
 
-        # Export options
-        st.markdown("### 📥 Exporter les Résultats")
-        col1, col2 = st.columns(2)
+        # Export options avec style amélioré
+        st.markdown("---")
+        st.markdown("### 📥 Télécharger les Résultats")
+        col1, col2, col3 = st.columns([1, 1, 2])
         with col1:
             create_download_button(df, "CSV", section_key)
         with col2:
             create_download_button(df, "XLSX", section_key)
+        with col3:
+            st.markdown("*Exportez toutes les données en CSV ou Excel*")
 
-        st.success(f"✅ {len(results)} entreprise(s) traitée(s)")
+        st.success(f"✅ Traitement terminé : {len(results)} entreprise(s) analysée(s)")
     else:
-        st.warning("⚠️ Aucun résultat")
+        st.warning("⚠️ Aucun résultat trouvé")
 
 
 # ──────────────────────────────────────────────────────
@@ -592,94 +784,95 @@ with tab_manual:
 # ──────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("### ℹ️ Instructions")
-    st.markdown("""
-    **🔍 Recherche par nom (recommandé) :**
-    1. Entrez simplement les noms d'entreprises
-    2. L'API trouvera automatiquement les données
-    3. Aucune authentification requise !
+    st.markdown("## 📚 Guide d'Utilisation")
     
-    **📁 Import fichier :**
-    Format optimal : 2 colonnes
-    - Colonne A : Nom entreprise
-    - Colonne B : SIRET ou SIREN (optionnel)
+    # Instructions avec expanders pour une meilleure organisation
+    with st.expander("🔍 **Recherche par Nom**", expanded=True):
+        st.markdown("""
+        **Simple et rapide :**
+        1. Entrez les noms d'entreprises
+        2. L'API trouve automatiquement les données
+        3. Aucune clé API nécessaire !
+        
+        💡 *Méthode recommandée*
+        """)
     
-    Format simple : 1 colonne
-    - Noms d'entreprises OU SIRET/SIREN
+    with st.expander("📁 **Import de Fichier**"):
+        st.markdown("""
+        **Format optimal (2 colonnes) :**
+        - Colonne A : Nom entreprise
+        - Colonne B : SIRET/SIREN (optionnel)
+        
+        **Format simple (1 colonne) :**
+        - Noms d'entreprises OU SIRET/SIREN
+        
+        📊 Formats : CSV, Excel (.xlsx, .xls)
+        """)
     
-    **⏱️ Rate Limiting :**
-    L'application respecte automatiquement les limites
-    de l'API (~250 req/min max) avec marge de sécurité.
-
-    **💡 SIRET/SIREN (optionnel) :**
-    - **SIRET :** 14 chiffres
-    - **SIREN :** 9 chiffres
-    - Utilisez-les pour une recherche plus précise
-    """)
-
-    # Show mode
-    st.success("🌐 Mode : API publique (recherche-entreprises.api.gouv.fr)")
-    st.caption(f"⏱️ Rate limiting : {API_DELAY_SECONDS}s entre requêtes | Max {API_MAX_RETRIES} tentatives")
-
-    st.markdown("### 📊 Données extraites (enrichies)")
-    st.markdown("""
-    **🔍 Identification :**
-    - SIRET / SIREN / Sigle
-    - Nom complet
-    - Vérification SIREN
+    with st.expander("📊 **Données Enrichies**"):
+        st.markdown("""
+        **🔍 Identification**
+        - SIRET, SIREN, Nom, Sigle
+        
+        **🏢 Structure**
+        - État, Catégorie, Nature juridique
+        - Date de création, Activité (NAF)
+        
+        **💰 Finances** *(10-20% publient)*
+        - Chiffre d'affaires
+        - Résultat net
+        
+        **📍 Localisation**
+        - Adresse complète
+        - Coordonnées GPS
+        
+        **👥 Organisation**
+        - Effectifs, Dirigeants
+        - Nombre d'établissements
+        
+        **🏆 Certifications**
+        - Qualiopi, RGE, Bio, ESS
+        - Société à mission
+        """)
     
-    **🏢 État et structure :**
-    - État administratif
-    - Date de création
-    - Catégorie d'entreprise
-    - Nature juridique
-    - Activité principale (NAF)
-    
-    **👥 Effectifs et établissements :**
-    - Tranche d'effectif salarié
-    - Année de l'effectif
-    - Nombre total d'établissements
-    - Établissements ouverts
-    
-    **💰 Données financières :**
-    - Année des finances
-    - **Données financières publiées** (Oui/Non)
-    - Chiffre d'affaires (CA)
-    - Résultat net
-    
-    ⚠️ **Important** : Seules les GE, ETI et sociétés cotées
-    publient leurs comptes. ~80% des entreprises françaises
-    (PME, micro-entreprises) n'y sont PAS obligées.
-    
-    **📍 Localisation :**
-    - Adresse complète du siège
-    - Code postal, Commune
-    - Département, Région
-    - Coordonnées GPS (latitude/longitude)
-    
-    **👤 Dirigeants :**
-    - Liste des dirigeants et leurs fonctions
-    - Direction générale
-    - Commissaires aux comptes
-    
-    **🏆 Certifications et labels :**
-    - Qualiopi, RGE, Bio, ESS
-    - Société à mission
-    - Service public
-    - Conventions collectives (IDCC)
-    
-    **✨ Autres :**
-    - Organisme de formation
-    - Entrepreneur spectacle
-    """)
-
     st.markdown("---")
-    st.markdown(
-        "### 🔗 Source de données\n"
-        "Cette application utilise l'[API Recherche d'Entreprises]"
-        "(https://recherche-entreprises.api.gouv.fr/) de l'État "
-        "français, inspirée du projet "
-        "[datagouv-mcp](https://github.com/datagouv/datagouv-mcp) "
-        "qui fournit un serveur MCP pour accéder aux données de "
-        "[data.gouv.fr](https://www.data.gouv.fr)."
-    )
+    
+    # Informations techniques avec style
+    st.markdown("### ⚙️ Configuration")
+    st.success("🌐 **API Publique Active**")
+    st.caption("recherche-entreprises.api.gouv.fr")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.metric("⏱️ Délai", f"{API_DELAY_SECONDS}s")
+    with col_b:
+        st.metric("🔄 Tentatives", API_MAX_RETRIES)
+    
+    st.markdown("---")
+    
+    # Note importante sur les finances
+    st.markdown("### ⚠️ Note Importante")
+    st.warning("""
+    **Données financières limitées**
+    
+    Seules 10-20% des entreprises publient leurs comptes :
+    - Grandes Entreprises (GE)
+    - ETI (Entreprises de Taille Intermédiaire)
+    - Sociétés cotées
+    
+    Les PME < 50 salariés ne sont **pas obligées** de publier.
+    """)
+    
+    st.markdown("---")
+    
+    # Source et crédits
+    st.markdown("### 🔗 Sources")
+    st.markdown("""
+    **Données officielles**
+    
+    📊 [API Recherche d'Entreprises](https://recherche-entreprises.api.gouv.fr/)
+    
+    🤝 Inspiré par [datagouv-mcp](https://github.com/datagouv/datagouv-mcp)
+    
+    🇫🇷 [data.gouv.fr](https://www.data.gouv.fr)
+    """)

@@ -1,109 +1,277 @@
-# TestsMCP
-un repo pour les requêtes ponctuelles osint
+# 🏢 Recherche d'Entreprises Françaises - Application Modernisée
 
-## 🏢 Application de Recherche d'Entreprises
+Application Streamlit modernisée pour rechercher et enrichir les données d'entreprises françaises avec l'API officielle de l'État et les données financières du RNE (INPI).
 
-Application Streamlit pour rechercher des entreprises françaises via l'API officielle de l'État, inspirée du projet [datagouv-mcp](https://github.com/datagouv/datagouv-mcp).
+![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
+![Streamlit](https://img.shields.io/badge/streamlit-latest-red.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-### 🔑 Aucune authentification requise !
+---
 
-L'API Recherche d'Entreprises est **100% publique et gratuite** - aucune clé API nécessaire.
+## ✨ Nouveautés v2.0
 
-### ⚠️ Données réelles uniquement
+### 🎨 Interface Modernisée
+- ✅ Design avec **gradients et couleurs professionnelles**
+- ✅ **Cards stylées** pour une meilleure organisation
+- ✅ **Métriques visuelles** avec indicateurs temps réel
+- ✅ **Double vue** : tableau complet ET cartes détaillées
+- ✅ **Sidebar réorganisée** avec expanders et sections claires
+- ✅ **CSS personnalisé** pour un look moderne
 
-L'application utilise **UNIQUEMENT des données réelles** de l'API officielle. Si une entreprise n'est pas trouvée ou si l'API est indisponible, le résultat sera marqué comme "Non trouvé" ou "Erreur". **Aucune donnée de démonstration ou fictive n'est utilisée**.
+### 💾 Solution de Stockage RNE Optimisée
+- ✅ **Index ultra-léger** : 213 KB au lieu de 27 GB ! **(Réduction 355x)**
+- ✅ **Approche hybride** : API DINUM + Index ranges + FTP RNE à la demande
+- ✅ **Cache intelligent** pour performances optimales
+- ✅ **Stockage minimal** : ~50 KB + cache temporaire
+- ✅ **3 solutions documentées** : Gratuite (FTP), VPS ($3-6/mois), S3 ($8-20/mois)
 
-### Fonctionnalités
+---
 
-- **🔍 Recherche par nom** (recommandé) : entrez simplement les noms d'entreprises
-- **Import fichier optimisé** : 
-  - Format optimal : 2 colonnes (Nom + SIRET/SIREN)
-  - Format simple : 1 colonne (Noms ou SIRET/SIREN)
-- **Recherche flexible** : par nom, SIRET (14 chiffres) ou SIREN (9 chiffres)
-- **Rate limiting intelligent** : respect automatique des limites API (~250 req/min) avec marge de sécurité de 10%
-- **Données enrichies** :
-  - ✅ Identification complète (SIREN, SIRET, nom, sigle)
-  - ✅ Données financières (CA, résultat net avec année)
-  - ✅ Localisation précise (adresse, GPS, département, région)
-  - ✅ **Dirigeants et direction** (noms, fonctions, commissaires aux comptes)
-  - ✅ **Certifications et labels** (Qualiopi, RGE, Bio, ESS, Société à mission)
-  - ✅ Conventions collectives (IDCC)
-  - ✅ Effectifs et établissements
-- Affichage des résultats dans un tableau interactif
-- **Export des données en CSV ou XLSX** (livrable final)
+## 🚀 Démarrage Rapide
 
-### Utilisation dans Codespaces
-
-1. Ouvrez ce repository dans GitHub Codespaces
-2. Le conteneur de développement installera automatiquement les dépendances
-3. Lancez l'application :
-   ```bash
-   streamlit run app.py
-   ```
-4. Accédez à l'application via le port 8501
-
-### Utilisation en local
-
-1. Installez les dépendances :
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. Lancez l'application :
-   ```bash
-   streamlit run app.py
-   ```
-
-3. Testez avec les fichiers d'exemple :
-   - `exemple_fichier_optimal.csv` : format avec 2 colonnes (Nom + SIRET)
-   - `exemple_fichier_simple.csv` : format avec 1 colonne (Noms uniquement)
-
-### Format des données
-
-**Entrée (fichier CSV/Excel) - Format recommandé :**
-```csv
-Nom,SIRET
-Airbus,38347481400019
-Total Energies,54205118000066
-Orange,38012986600052
+### Option 1 : GitHub Codespaces (Recommandé)
+```bash
+# Le conteneur de développement configure tout automatiquement
+streamlit run app.py
 ```
 
-**Entrée (fichier CSV/Excel) - Format simple :**
-```csv
-Nom
-Airbus
-Total Energies
-Orange
+### Option 2 : Local
+```bash
+# Installer les dépendances
+pip install -r requirements.txt
+
+# Lancer l'application
+streamlit run app.py
 ```
 
-**Sortie - Données enrichies (35+ colonnes) :**
-- Identification : SIRET, SIREN, Nom, Sigle, Vérification
-- Structure : État, Catégorie, Nature juridique, Date création
-- Activité : NAF, Effectifs, Établissements
-- Finances : Année, CA, Résultat net
-- Localisation : Adresse, Code postal, Commune, Département, Région, GPS
-- **Dirigeants** : Liste nominative avec fonctions
-- **Certifications** : Qualiopi, RGE, Bio, ESS, etc.
-- **Conventions collectives** : IDCC
-- Autres : Organisme de formation, Entrepreneur spectacle
+---
 
-**Export** : CSV ou XLSX avec toutes les données
+## 📊 Fonctionnalités
 
-### ⚡ Rate Limiting
+### 1. Recherche d'Entreprises
+- 🔍 **Par nom** (recommandé) : "Total Energies", "Airbus", etc.
+- 🔢 **Par SIREN** (9 chiffres) : "552100554"
+- 📋 **Par SIRET** (14 chiffres) : "55210055400010"
+- 📁 **Import fichier** : CSV ou Excel (1 ou 2 colonnes)
 
-L'application respecte automatiquement les limites de l'API (~250 requêtes/minute) avec une **marge de sécurité de 50%**, soit environ 2 requêtes par seconde maximum (délai de 0.5s entre chaque requête).
+### 2. Données Enrichies
 
-**Gestion intelligente des erreurs 429 :**
-- Retry automatique avec backoff exponentiel (1s, 2s, 4s...)
-- Jusqu'à 3 tentatives par requête
-- Marqué comme "Non trouvé" si toutes les tentatives échouent
+#### 🔍 Identification
+- SIREN, SIRET, Nom complet, Sigle
+- Vérification automatique
 
-Pour les gros fichiers, le temps de traitement sera indiqué.
+#### 🏢 Structure & État
+- État administratif (Active/Cessée)
+- Date de création
+- Catégorie d'entreprise (GE, ETI, PME, etc.)
+- Nature juridique
+- Activité principale (code NAF)
 
-### API utilisée
+#### 💰 Finances *(10-20% des entreprises publient)*
+- Chiffre d'affaires
+- Résultat net
+- Année des finances
+- Indicateur de publication
 
-Cette application utilise l'[API Recherche d'Entreprises](https://recherche-entreprises.api.gouv.fr/) de l'État français pour vérifier les SIREN et récupérer les données financières.
+#### 📍 Localisation
+- Adresse complète du siège
+- Code postal, Commune, Département, Région
+- Coordonnées GPS (latitude/longitude)
 
-### Intégration datagouv-mcp
+#### 👥 Organisation
+- Effectifs salariés (tranche)
+- Nombre d'établissements
+- Liste des dirigeants et leurs fonctions
+- Commissaires aux comptes
 
-Ce projet s'inspire du serveur MCP [datagouv-mcp](https://github.com/datagouv/datagouv-mcp) qui permet aux chatbots IA d'interroger les données de [data.gouv.fr](https://www.data.gouv.fr). L'application utilise les mêmes API gouvernementales pour la vérification des SIREN et la récupération des données financières des entreprises françaises.
+#### 🏆 Certifications & Labels
+- Qualiopi, RGE, Bio, ESS
+- Société à mission
+- Service public
+- Conventions collectives (IDCC)
+
+### 3. Export des Données
+- 📥 **CSV** : Format universel
+- 📊 **Excel** : Format Microsoft (.xlsx)
+
+---
+
+## 💾 Enrichissement RNE (Données Financières)
+
+### Architecture Optimisée
+
+```
+API DINUM (Gratuit)
+    ↓ Recherche entreprise
+Obtenir SIREN
+    ↓ 
+Index Ultra-Léger (213 KB)
+    ↓ Recherche binaire O(log n)
+FTP INPI (Gratuit)
+    ↓ Télécharger 1 fichier (~2-3 MB)
+Cache Local
+    ↓ Réutilisation
+Données Financières
+```
+
+### Avantages
+- ✅ **213 KB** de stockage (vs 27 GB avant)
+- ✅ **Gratuit** (pas de serveur externe)
+- ✅ **Rapide** : <1s avec cache, ~5-10s sans
+- ✅ **À jour** : Données directement depuis l'INPI
+- ✅ **1,5M entreprises** indexées
+
+### Utilisation
+
+```python
+from enrichment_hybrid import enrich_from_api_dinum_and_rne
+
+# Enrichir une entreprise
+data = enrich_from_api_dinum_and_rne("552100554")  # EDF
+
+# Afficher
+print(f"CA: {data['bilans'][0]['chiffre_affaires']} €")
+```
+
+### Configuration Initiale (Une Seule Fois)
+
+```bash
+# 1. Télécharger les données RNE (3,5 GB)
+wget ftp://rneinpiro:vv8_rQ5f4M_2-E@www.inpi.net/stock_RNE_comptes_annuels_*.zip \
+  -O stock_comptes_annuels.zip
+
+# 2. Créer l'index léger (~20 minutes)
+python3 create_rne_index_ranges.py
+
+# 3. Tester
+python3 test_hybrid_approach.py
+
+# 4. Nettoyer (libère 3,5 GB)
+rm stock_comptes_annuels.zip
+```
+
+**📖 Documentation complète :** Voir [README_RNE_OPTIMAL.md](README_RNE_OPTIMAL.md) et [COMPARAISON_SOLUTIONS_STOCKAGE.md](COMPARAISON_SOLUTIONS_STOCKAGE.md)
+
+---
+
+## 📁 Structure du Projet
+
+```
+TestsMCP/
+├── app.py                          # 🎨 Application Streamlit modernisée
+├── requirements.txt                # Dépendances Python
+│
+├── enrichment_hybrid.py            # 💾 Module RNE optimisé (recommandé)
+├── enrichment_s3.py                # ☁️  Alternative avec AWS S3
+├── enrichment_pappers.py           # 📊 Alternative avec API Pappers
+│
+├── create_rne_index_ranges.py     # 🔧 Créer l'index ultra-léger
+├── test_hybrid_approach.py        # 🧪 Tester la solution RNE
+│
+├── rne_siren_ranges.json          # 📋 Index léger (213 KB) ✅ À committer
+├── rne_cache/                      # 💾 Cache temporaire (gitignore)
+│
+├── README_RNE_OPTIMAL.md           # 📖 Guide solution RNE
+├── COMPARAISON_SOLUTIONS_STOCKAGE.md # 📊 Comparaison des solutions
+├── GUIDE_STOCKAGE_RNE.md           # 📚 Guide détaillé
+└── GUIDE_PAPPERS.md                # 📚 Guide API Pappers
+```
+
+---
+
+## ⚙️ Configuration Technique
+
+### Rate Limiting
+- **Délai** : 0,5s entre requêtes
+- **Tentatives** : 3 maximum
+- **API Limite** : ~250 req/min (respecté avec marge 50%)
+
+### Cache RNE
+- **Localisation** : `rne_cache/`
+- **Taille** : 50-500 MB selon usage
+- **Nettoyage** : `rm -rf rne_cache/` (fichiers re-téléchargés à la demande)
+
+---
+
+## ⚠️ Notes Importantes
+
+### Données Financières
+Seules **10-20%** des entreprises publient leurs comptes annuels :
+- ✅ Grandes Entreprises (GE)
+- ✅ ETI (Entreprises de Taille Intermédiaire)
+- ✅ Sociétés cotées
+
+Les PME < 50 salariés **ne sont pas obligées** de publier. Il est **normal** que 80% des résultats affichent "N/A" pour les finances.
+
+### Authentification
+**Aucune clé API n'est nécessaire** ! L'API Recherche d'Entreprises de l'État français est **100% publique et gratuite**.
+
+---
+
+## 🔗 Sources de Données
+
+### API Principales
+- 🇫🇷 [API Recherche d'Entreprises](https://recherche-entreprises.api.gouv.fr/) - Identification et données de base
+- 🏛️  [FTP RNE INPI](ftp://www.inpi.net/) - Données financières officielles
+- 📊 [data.gouv.fr](https://www.data.gouv.fr) - Données publiques
+
+### Inspirations
+- 🤝 [datagouv-mcp](https://github.com/datagouv/datagouv-mcp) - Serveur MCP pour data.gouv.fr
+
+---
+
+## 🎓 Guides & Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [README_RNE_OPTIMAL.md](README_RNE_OPTIMAL.md) | Solution optimisée RNE avec index ultra-léger |
+| [COMPARAISON_SOLUTIONS_STOCKAGE.md](COMPARAISON_SOLUTIONS_STOCKAGE.md) | Comparaison FTP gratuit vs VPS vs S3 |
+| [GUIDE_STOCKAGE_RNE.md](GUIDE_STOCKAGE_RNE.md) | Guide détaillé des solutions de stockage |
+| [GUIDE_PAPPERS.md](GUIDE_PAPPERS.md) | Alternative avec API Pappers |
+| [GUIDE_RNE_COMPTES_ANNUELS.md](GUIDE_RNE_COMPTES_ANNUELS.md) | Format des comptes annuels RNE |
+
+---
+
+## 🐛 Dépannage
+
+### L'index RNE n'est pas créé
+```bash
+python3 create_rne_index_ranges.py
+```
+
+### Le cache est trop gros
+```bash
+rm -rf rne_cache/  # Les fichiers seront re-téléchargés à la demande
+```
+
+### Erreur FTP
+Vérifiez que les identifiants FTP sont corrects dans `enrichment_hybrid.py`
+
+---
+
+## 📊 Statistiques
+
+- **1,5M entreprises** dans l'index RNE
+- **1380 fichiers** JSON sur le FTP INPI
+- **213 KB** d'index (réduction 355x vs index complet)
+- **12M+ bilans** disponibles
+
+---
+
+## 📝 Licence
+
+MIT License - Voir le fichier LICENSE pour plus de détails.
+
+---
+
+## 🙏 Remerciements
+
+- **État français** pour l'API publique gratuite
+- **INPI** pour les données RNE accessibles via FTP
+- **datagouv-mcp** pour l'inspiration du projet
+
+---
+
+**Auteur** : yanntanguyyta-stack  
+**Version** : 2.0  
+**Date** : Février 2026
