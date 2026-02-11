@@ -173,14 +173,17 @@ Pour ajuster selon vos besoins :
 
 **Plus de performance (+ espace disque)** :
 ```python
-MAX_CONCURRENT_FILES = 4 ou 5
-# Nécessite ~10-12.5 MB de cache
+MAX_CONCURRENT_FILES = 3
+LIMITED_SPACE_MODE = False
+# Nécessite ~240 MB de cache (3 × 80 MB)
 ```
 
-**Moins d'espace disque (+ temps)** :
+**Moins d'espace disque (mode actuel, recommandé)** :
 ```python
-MAX_CONCURRENT_FILES = 2
-# Seulement ~5 MB de cache, mais +50% temps
+MAX_CONCURRENT_FILES = 1  # 1 fichier à la fois
+LIMITED_SPACE_MODE = True  # Nettoyage agressif
+# Seulement ~80 MB de cache temporaire
+# + 84 fichiers de base (000001-000084) = 5.2 GB pérennes
 ```
 
 ## 📋 API du module

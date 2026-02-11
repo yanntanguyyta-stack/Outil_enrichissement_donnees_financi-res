@@ -14,6 +14,7 @@ IMPORTANT: This app only uses REAL data from the official French government API.
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+from pathlib import Path
 import re
 import time
 import requests
@@ -1015,13 +1016,44 @@ with st.sidebar:
         )
         
         if use_rne:
-            st.success("""
-            ✅ **Enrichissement RNE activé**
+            # Vérifier si des fichiers sont en cache
+            import os
+            cache_dir = Path("/workspaces/TestsMCP/rne_cache")
+            cached_files = len(list(cache_dir.glob("*.json"))) if cache_dir.exists() else 0
             
-            📈 Données sur **plusieurs années**
-            💾 Cache local (rapide)
-            🔄 Téléchargement à la demande
-            """)
+            if cached_files > 0:
+                st.success(f"""
+                ✅ **Cache RNE disponible**
+                
+                📦 {cached_files} fichier(s) en cache
+                ⚡ Accès rapide sans téléchargement
+                """)
+            else:
+                st.warning("""
+                ⚠️ **Aucun fichier en cache**
+                
+                Le premier accès téléchargera 3.5 GB depuis le FTP.
+                Cela peut prendre **30-60 secondes par fichier** et causer des erreurs 502.
+                """)
+                
+                st.info("""
+                💡 **Recommandation pour usage intensif**
+                
+                Pour éviter les timeouts, extrayez les fichiers localement :
+                
+                ```bash
+                # 1. Télécharger le ZIP (une seule fois)
+                wget ftp://rneinpiro:vv8_rQ5f4M_2-E@www.inpi.net/stock_RNE_comptes_annuels_20250926_1000_v2.zip
+                
+                # 2. Extraire pour vos SIRENs
+                python3 extract_rne_files.py --sirens [vos_sirens]
+                
+                # Ou extraire tout (1380 fichiers, ~2-3 GB)
+                python3 extract_rne_files.py --all
+                ```
+                
+                Une fois extrait, le cache sera utilisé (rapide).
+                """)
             
             st.info("""
             **🚀 Mode optimisé pour gros volumes**

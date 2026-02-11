@@ -25,8 +25,16 @@ INDEX_FILE = Path("/workspaces/TestsMCP/rne_siren_ranges.json")
 CACHE_DIR = Path("/workspaces/TestsMCP/rne_cache")
 
 # Configuration traitement par lots
-MAX_CONCURRENT_FILES = 3  # Nombre max de fichiers RNE téléchargés simultanément
-AVG_RNE_FILE_SIZE_MB = 2.5  # Taille moyenne d'un fichier RNE
+MAX_CONCURRENT_FILES = 1  # 1 seul fichier à la fois pour économiser l'espace
+AVG_RNE_FILE_SIZE_MB = 80  # Taille réelle moyenne d'un fichier RNE
+
+# Timeouts et retry
+FTP_TIMEOUT = 60  # Timeout FTP en secondes
+FTP_MAX_RETRIES = 2  # Nombre de tentatives
+ZIP_DOWNLOAD_WARNING_SHOWN = False  # Flag pour éviter les avertissements répétés
+
+# Mode espace disque limité
+LIMITED_SPACE_MODE = True  # Activer le nettoyage agressif après chaque fichier
 
 # Codes de liasse principaux
 LIASSE_CODES = {
@@ -75,7 +83,13 @@ def find_file_for_siren(siren: str, ranges: List[Dict]) -> Optional[str]:
 
 
 def download_json_from_ftp(filename: str, use_cache: bool = True) -> Optional[List[Dict]]:
-    """Télécharger un fichier JSON depuis le FTP"""
+    """Télécharger un fichier JSON depuis le FTP
+    
+    ⚠️  ATTENTION: Cette fonction télécharge le ZIP complet (3.5 GB) à chaque fois.
+    Pour éviter cela, téléchargez le ZIP une seule fois et extrayez localement.
+    """
+    global ZIP_DOWNLOAD_WARNING_SHOWN
+    
     cache_path = CACHE_DIR / filename
     
     # Cache
@@ -84,38 +98,73 @@ def download_json_from_ftp(filename: str, use_cache: bool = True) -> Optional[Li
         try:
             with open(cache_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️  Erreur lecture cache {filename}: {e}")
+            # Continuer avec téléchargement
     
-    # Télécharger
-    print(f"⬇️  FTP: {filename} (cela prend ~5-10 secondes)...")
+    # Avertissement sur le téléchargement complet
+    if not ZIP_DOWNLOAD_WARNING_SHOWN:
+        print(f"\n⚠️  AVERTISSEMENT: Téléchargement du ZIP complet (3.5 GB)")
+        print(f"💡 Pour de meilleures performances, téléchargez le ZIP une fois:")
+        print(f"   wget ftp://{FTP_USER}:{FTP_PASSWORD}@{FTP_HOST}/{FTP_ZIP_FILE}")
+        print(f"   Puis extrayez tous les fichiers localement\n")
+        ZIP_DOWNLOAD_WARNING_SHOWN = True
     
-    try:
-        ftp = FTP(FTP_HOST, timeout=30)
-        ftp.login(FTP_USER, FTP_PASSWORD)
-        
-        # Télécharger le ZIP complet (optimisation possible avec partial download)
-        zip_buffer = io.BytesIO()
-        ftp.retrbinary(f'RETR {FTP_ZIP_FILE}', zip_buffer.write)
-        ftp.quit()
-        
-        # Extraire le fichier voulu
-        zip_buffer.seek(0)
-        with zipfile.ZipFile(zip_buffer, 'r') as zf:
-            with zf.open(filename) as f:
-                data = json.loads(f.read().decode('utf-8'))
-                
-                # Mettre en cache
-                if use_cache:
-                    CACHE_DIR.mkdir(exist_ok=True)
-                    with open(cache_path, 'w', encoding='utf-8') as cache_f:
-                        json.dump(data, cache_f, ensure_ascii=False)
-                
-                return data
+    # Télécharger avec retry
+    for attempt in range(FTP_MAX_RETRIES):
+        try:
+            print(f"⬇️  FTP: {filename} (Tentative {attempt + 1}/{FTP_MAX_RETRIES})")
+            print(f"   ⏱️  Cela peut prendre 30-60s (téléchargement 3.5 GB)...")
+            
+            ftp = FTP(FTP_HOST, timeout=FTP_TIMEOUT)
+            ftp.login(FTP_USER, FTP_PASSWORD)
+            
+            # Télécharger le ZIP complet
+            zip_buffer = io.BytesIO()
+            
+            def progress_callback(block):
+                # Afficher progression tous les 100 MB
+                if zip_buffer.tell() % (100 * 1024 * 1024) < 8192:
+                    mb_downloaded = zip_buffer.tell() / (1024 * 1024)
+                    print(f"   📥 {mb_downloaded:.0f} MB téléchargés...")
+            
+            ftp.retrbinary(f'RETR {FTP_ZIP_FILE}', zip_buffer.write, blocksize=8192)
+            ftp.quit()
+            
+            print(f"   ✅ Téléchargement terminé, extraction de {filename}...")
+            
+            # Extraire le fichier voulu
+            zip_buffer.seek(0)
+            with zipfile.ZipFile(zip_buffer, 'r') as zf:
+                if filename not in zf.namelist():
+                    print(f"❌ {filename} non trouvé dans le ZIP")
+                    return None
+                    
+                with zf.open(filename) as f:
+                    data = json.loads(f.read().decode('utf-8'))
+            
+            # Sauvegarder dans le cache
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f)
+                print(f"💾 Cache sauvegardé: {filename}")
+            except Exception as e:
+                print(f"⚠️  Impossible de sauvegarder le cache: {e}")
+            
+            return data
+            
+        except Exception as e:
+            print(f"❌ Erreur téléchargement {filename} (tentative {attempt + 1}): {e}")
+            if attempt < FTP_MAX_RETRIES - 1:
+                print(f"   🔄 Nouvelle tentative dans 3 secondes...")
+                import time
+                time.sleep(3)
+            else:
+                print(f"❌ Échec définitif après {FTP_MAX_RETRIES} tentatives")
+                return None
     
-    except Exception as e:
-        print(f"❌ Erreur FTP: {e}")
-        return None
+    return None
 
 
 def extract_financial_data(bilan: Dict) -> Dict[str, Any]:
@@ -285,12 +334,17 @@ def process_batch(filename: str, sirens: List[str], max_bilans: int = 10, cleanu
         filename: Nom du fichier RNE
         sirens: Liste des SIRENs à extraire
         max_bilans: Nombre max de bilans par SIREN
-        cleanup: Supprimer le fichier du cache après traitement
+       cleanup: Supprimer le fichier du cache après traitement
     
     Returns:
         {siren: {données enrichies}, ...}
     """
     print(f"\n📦 Traitement du lot: {filename} ({len(sirens)} entreprise(s))")
+    
+    # En mode espace limité, toujours nettoyer sauf si déjà en cache (< 000085)
+    if LIMITED_SPACE_MODE:
+        file_num = int(filename.replace('stock_', '').replace('.json', ''))
+        cleanup = cleanup and file_num >= 85  # Garder les 84 premiers fichiers
     
     # 1. Télécharger le fichier RNE
     data = download_json_from_ftp(filename, use_cache=True)
