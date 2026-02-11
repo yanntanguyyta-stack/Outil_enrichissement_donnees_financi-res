@@ -30,71 +30,71 @@ DEMO_COMPANIES = {
     "airbus": {
         "nom_complet": "AIRBUS",
         "siren": "383474814",
-        "ca": "49524000000",
-        "resultat": "3501000000",
+        "ca": 49524000000,
+        "resultat": 3501000000,
         "cloture": "2023-12-31"
     },
     "383474814": {
         "nom_complet": "AIRBUS",
         "siren": "383474814",
-        "ca": "49524000000",
-        "resultat": "3501000000",
+        "ca": 49524000000,
+        "resultat": 3501000000,
         "cloture": "2023-12-31"
     },
     "total": {
         "nom_complet": "TOTALENERGIES SE",
         "siren": "542051180",
-        "ca": "263310000000",
-        "resultat": "20526000000",
+        "ca": 263310000000,
+        "resultat": 20526000000,
         "cloture": "2023-12-31"
     },
     "542051180": {
         "nom_complet": "TOTALENERGIES SE",
         "siren": "542051180",
-        "ca": "263310000000",
-        "resultat": "20526000000",
+        "ca": 263310000000,
+        "resultat": 20526000000,
         "cloture": "2023-12-31"
     },
     "orange": {
         "nom_complet": "ORANGE",
         "siren": "380129866",
-        "ca": "42517000000",
-        "resultat": "1563000000",
+        "ca": 42517000000,
+        "resultat": 1563000000,
         "cloture": "2023-12-31"
     },
     "380129866": {
         "nom_complet": "ORANGE",
         "siren": "380129866",
-        "ca": "42517000000",
-        "resultat": "1563000000",
+        "ca": 42517000000,
+        "resultat": 1563000000,
         "cloture": "2023-12-31"
     },
     "renault": {
         "nom_complet": "RENAULT",
         "siren": "441639465",
-        "ca": "52354000000",
-        "resultat": "2287000000",
+        "ca": 52354000000,
+        "resultat": 2287000000,
         "cloture": "2023-12-31"
     },
     "441639465": {
         "nom_complet": "RENAULT",
         "siren": "441639465",
-        "ca": "52354000000",
-        "resultat": "2287000000",
+        "ca": 52354000000,
+        "resultat": 2287000000,
         "cloture": "2023-12-31"
     },
     "lvmh": {
         "nom_complet": "LVMH MOET HENNESSY LOUIS VUITTON",
         "siren": "775670417",
-        "ca": "86153000000",
-        "resultat": "15174000000",
+        "ca": 86153000000,
+        "resultat": 15174000000,
         "cloture": "2023-12-31"
     },
     "775670417": {
         "nom_complet": "LVMH MOET HENNESSY LOUIS VUITTON",
         "siren": "775670417",
-        "ca": "86153000000",
-        "resultat": "15174000000",
+        "ca": 86153000000,
+        "resultat": 15174000000,
         "cloture": "2023-12-31"
     }
 }
@@ -113,8 +113,17 @@ def search_company_api(query):
         if data.get("results") and len(data["results"]) > 0:
             return data["results"][0]
         return None
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
+        # Network-related errors (connection, timeout, DNS)
         st.warning(f"API non accessible pour '{query}': {str(e)}. Utilisation des données de démonstration.")
+        return None
+    except ValueError as e:
+        # JSON parsing errors
+        st.warning(f"Erreur de format de réponse pour '{query}': {str(e)}. Utilisation des données de démonstration.")
+        return None
+    except Exception as e:
+        # Unexpected errors
+        st.warning(f"Erreur inattendue pour '{query}': {str(e)}. Utilisation des données de démonstration.")
         return None
 
 
@@ -136,13 +145,21 @@ def search_company_demo(query):
 
 def extract_company_info(company_data):
     """Extract relevant information from company data."""
+    # Handle both API format and demo format
     info = {
-        "Nom": company_data.get("nom_complet", "N/A"),
+        "Nom": company_data.get("nom_complet", company_data.get("nom_raison_sociale", "N/A")),
         "SIREN": company_data.get("siren", "N/A"),
         "CA": company_data.get("ca", "N/A"),
         "Résultat": company_data.get("resultat", "N/A"),
-        "Clôture": company_data.get("cloture", "N/A")
+        "Clôture": company_data.get("cloture", company_data.get("date_cloture_exercice", "N/A"))
     }
+    
+    # Format numeric values for display
+    if isinstance(info["CA"], (int, float)) and info["CA"] != "N/A":
+        info["CA"] = f"{info['CA']:,.0f} €"
+    
+    if isinstance(info["Résultat"], (int, float)) and info["Résultat"] != "N/A":
+        info["Résultat"] = f"{info['Résultat']:,.0f} €"
     
     return info
 
