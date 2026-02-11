@@ -1,19 +1,21 @@
 """
 Streamlit app for searching French companies using data.gouv.fr API.
-This app can work in two modes:
-1. API mode: Connects directly to data.gouv.fr API (requires internet access)
-2. Demo mode: Uses sample data for demonstration purposes
 
 Integration with datagouv-mcp:
   The app leverages the same data.gouv.fr APIs used by the datagouv-mcp server
   (https://github.com/datagouv/datagouv-mcp) to verify SIREN numbers and retrieve
-  financial data for French companies. It accepts SIRET numbers from a file,
-  extracts the SIREN (first 9 digits), verifies them, and returns financial data.
+  financial data for French companies. It accepts company names, SIRET, or SIREN
+  numbers from a file or manual input, verifies them, and returns financial data.
+
+IMPORTANT: This app only uses REAL data from the official French government API.
+           No demo or fake data is returned. If a company is not found or if there's
+           an API error, the result will be marked as "Not found" or "Error".
 """
 import streamlit as st
 import pandas as pd
 from io import BytesIO
 import re
+import time
 
 st.set_page_config(
     page_title="Recherche d'Entreprises",
@@ -22,335 +24,29 @@ st.set_page_config(
 )
 
 st.title("🏢 Recherche d'Entreprises Françaises")
-st.markdown("Recherchez des entreprises par nom, SIREN ou SIRET — "
-            "ou importez un fichier CSV/Excel contenant des SIRET")
+st.markdown("**Recherchez des entreprises par nom** — le SIRET/SIREN est optionnel pour plus de précision")
+st.info("💡 **API publique et gratuite** — Aucune authentification requise ! "
+        "Cette application utilise l'API ouverte de l'État français.")
+st.warning("⚠️ **Données financières** : Seules 10-20% des entreprises publient leurs comptes (GE, ETI, sociétés cotées). "
+           "Les PME < 50 salariés ne sont pas obligées de publier. C'est normal si beaucoup de résultats affichent 'N/A'.")
 
 # Check if we can import requests
 try:
     import requests
     USE_API = True
     API_BASE_URL = "https://recherche-entreprises.api.gouv.fr"
+    # Rate limiting: API limite ~250 req/min (4.17 req/sec)
+    # Avec marge de sécurité de 50%: 2 req/sec max
+    # Délai entre requêtes: 1/2 = 0.5 secondes
+    API_DELAY_SECONDS = 0.5  # Marge de sécurité importante pour éviter les 429
+    API_MAX_RETRIES = 3  # Nombre de tentatives en cas d'erreur 429
 except ImportError:
     USE_API = False
+    API_DELAY_SECONDS = 0
 
-# Demo data for when API is not available
-DEMO_COMPANIES = {
-    "airbus": {
-        "nom_complet": "AIRBUS",
-        "siren": "383474814",
-        "siret": "38347481400019",
-        "siege": {
-            "siret": "38347481400019",
-            "activite_principale": "70.10Z",
-            "adresse": "1 Rond-Point Maurice Bellonte, 31700 Blagnac",
-        },
-        "nombre_etablissements": 15,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1970-01-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 49524000000,
-            "resultat_net": 3501000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "383474814": {
-        "nom_complet": "AIRBUS",
-        "siren": "383474814",
-        "siret": "38347481400019",
-        "siege": {
-            "siret": "38347481400019",
-            "activite_principale": "70.10Z",
-            "adresse": "1 Rond-Point Maurice Bellonte, 31700 Blagnac",
-        },
-        "nombre_etablissements": 15,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1970-01-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 49524000000,
-            "resultat_net": 3501000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "38347481400019": {
-        "nom_complet": "AIRBUS",
-        "siren": "383474814",
-        "siret": "38347481400019",
-        "siege": {
-            "siret": "38347481400019",
-            "activite_principale": "70.10Z",
-            "adresse": "1 Rond-Point Maurice Bellonte, 31700 Blagnac",
-        },
-        "nombre_etablissements": 15,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1970-01-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 49524000000,
-            "resultat_net": 3501000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "total": {
-        "nom_complet": "TOTALENERGIES SE",
-        "siren": "542051180",
-        "siret": "54205118000066",
-        "siege": {
-            "siret": "54205118000066",
-            "activite_principale": "70.10Z",
-            "adresse": "2 Place Jean Millier, 92400 Courbevoie",
-        },
-        "nombre_etablissements": 120,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1924-03-28",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 263310000000,
-            "resultat_net": 20526000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "542051180": {
-        "nom_complet": "TOTALENERGIES SE",
-        "siren": "542051180",
-        "siret": "54205118000066",
-        "siege": {
-            "siret": "54205118000066",
-            "activite_principale": "70.10Z",
-            "adresse": "2 Place Jean Millier, 92400 Courbevoie",
-        },
-        "nombre_etablissements": 120,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1924-03-28",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 263310000000,
-            "resultat_net": 20526000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "54205118000066": {
-        "nom_complet": "TOTALENERGIES SE",
-        "siren": "542051180",
-        "siret": "54205118000066",
-        "siege": {
-            "siret": "54205118000066",
-            "activite_principale": "70.10Z",
-            "adresse": "2 Place Jean Millier, 92400 Courbevoie",
-        },
-        "nombre_etablissements": 120,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1924-03-28",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 263310000000,
-            "resultat_net": 20526000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "orange": {
-        "nom_complet": "ORANGE",
-        "siren": "380129866",
-        "siret": "38012986600052",
-        "siege": {
-            "siret": "38012986600052",
-            "activite_principale": "61.10Z",
-            "adresse": "111 Quai du Président Roosevelt, 92130 Issy-les-Moulineaux",
-        },
-        "nombre_etablissements": 500,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1991-01-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 42517000000,
-            "resultat_net": 1563000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "380129866": {
-        "nom_complet": "ORANGE",
-        "siren": "380129866",
-        "siret": "38012986600052",
-        "siege": {
-            "siret": "38012986600052",
-            "activite_principale": "61.10Z",
-            "adresse": "111 Quai du Président Roosevelt, 92130 Issy-les-Moulineaux",
-        },
-        "nombre_etablissements": 500,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1991-01-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 42517000000,
-            "resultat_net": 1563000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "38012986600052": {
-        "nom_complet": "ORANGE",
-        "siren": "380129866",
-        "siret": "38012986600052",
-        "siege": {
-            "siret": "38012986600052",
-            "activite_principale": "61.10Z",
-            "adresse": "111 Quai du Président Roosevelt, 92130 Issy-les-Moulineaux",
-        },
-        "nombre_etablissements": 500,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1991-01-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 42517000000,
-            "resultat_net": 1563000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "renault": {
-        "nom_complet": "RENAULT",
-        "siren": "441639465",
-        "siret": "44163946500018",
-        "siege": {
-            "siret": "44163946500018",
-            "activite_principale": "29.10Z",
-            "adresse": "122-122 bis avenue du Général Leclerc, 92100 Boulogne-Billancourt",
-        },
-        "nombre_etablissements": 50,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "2002-11-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 52354000000,
-            "resultat_net": 2287000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "441639465": {
-        "nom_complet": "RENAULT",
-        "siren": "441639465",
-        "siret": "44163946500018",
-        "siege": {
-            "siret": "44163946500018",
-            "activite_principale": "29.10Z",
-            "adresse": "122-122 bis avenue du Général Leclerc, 92100 Boulogne-Billancourt",
-        },
-        "nombre_etablissements": 50,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "2002-11-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 52354000000,
-            "resultat_net": 2287000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "44163946500018": {
-        "nom_complet": "RENAULT",
-        "siren": "441639465",
-        "siret": "44163946500018",
-        "siege": {
-            "siret": "44163946500018",
-            "activite_principale": "29.10Z",
-            "adresse": "122-122 bis avenue du Général Leclerc, 92100 Boulogne-Billancourt",
-        },
-        "nombre_etablissements": 50,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "2002-11-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 52354000000,
-            "resultat_net": 2287000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "lvmh": {
-        "nom_complet": "LVMH MOET HENNESSY LOUIS VUITTON",
-        "siren": "775670417",
-        "siret": "77567041700028",
-        "siege": {
-            "siret": "77567041700028",
-            "activite_principale": "70.10Z",
-            "adresse": "22 Avenue Montaigne, 75008 Paris",
-        },
-        "nombre_etablissements": 30,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1987-10-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 86153000000,
-            "resultat_net": 15174000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "775670417": {
-        "nom_complet": "LVMH MOET HENNESSY LOUIS VUITTON",
-        "siren": "775670417",
-        "siret": "77567041700028",
-        "siege": {
-            "siret": "77567041700028",
-            "activite_principale": "70.10Z",
-            "adresse": "22 Avenue Montaigne, 75008 Paris",
-        },
-        "nombre_etablissements": 30,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1987-10-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 86153000000,
-            "resultat_net": 15174000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-    "77567041700028": {
-        "nom_complet": "LVMH MOET HENNESSY LOUIS VUITTON",
-        "siren": "775670417",
-        "siret": "77567041700028",
-        "siege": {
-            "siret": "77567041700028",
-            "activite_principale": "70.10Z",
-            "adresse": "22 Avenue Montaigne, 75008 Paris",
-        },
-        "nombre_etablissements": 30,
-        "categorie_entreprise": "GE",
-        "tranche_effectif_salarie": "10 000 salariés et plus",
-        "date_creation": "1987-10-01",
-        "nature_juridique": "SA",
-        "etat_administratif": "A",
-        "finances": {
-            "ca": 86153000000,
-            "resultat_net": 15174000000,
-            "date_cloture_exercice": "2023-12-31",
-        },
-    },
-}
+if not USE_API:
+    st.error("❌ Module 'requests' non installé. Veuillez installer les dépendances : pip install -r requirements.txt")
+    st.stop()
 
 
 def is_siret(value):
@@ -372,112 +68,191 @@ def extract_siren_from_siret(siret):
 
 
 def search_company_api(query):
-    """Search for a company by name, SIREN or SIRET using the API."""
-    try:
-        # If SIRET, extract SIREN for the API search
-        search_query = query.strip()
-        if is_siret(search_query):
-            search_query = extract_siren_from_siret(search_query)
+    """Search for a company by name, SIREN or SIRET using the API.
+    
+    Includes retry logic with exponential backoff for 429 errors.
+    """
+    # If SIRET, extract SIREN for the API search
+    search_query = query.strip()
+    if is_siret(search_query):
+        search_query = extract_siren_from_siret(search_query)
 
-        url = f"{API_BASE_URL}/search"
-        params = {"q": search_query, "per_page": 1}
+    url = f"{API_BASE_URL}/search"
+    params = {"q": search_query, "per_page": 1}
+    
+    # Retry logic avec backoff exponentiel pour les erreurs 429
+    for attempt in range(API_MAX_RETRIES):
+        try:
+            # Rate limiting: respecter le délai entre requêtes
+            time.sleep(API_DELAY_SECONDS)
+            
+            response = requests.get(url, params=params, timeout=10)
+            
+            # Gestion spécifique de l'erreur 429 (Too Many Requests)
+            if response.status_code == 429:
+                if attempt < API_MAX_RETRIES - 1:
+                    # Backoff exponentiel: 1s, 2s, 4s...
+                    backoff_time = 2 ** attempt
+                    st.warning(f"⏳ Limite API atteinte pour '{query}'. "
+                              f"Nouvelle tentative dans {backoff_time}s... "
+                              f"(tentative {attempt + 1}/{API_MAX_RETRIES})")
+                    time.sleep(backoff_time)
+                    continue
+                else:
+                    st.error(f"❌ Limite API dépassée pour '{query}' après {API_MAX_RETRIES} tentatives. "
+                            "Entreprise non récupérée.")
+                    return None
+            
+            response.raise_for_status()
 
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-
-        data = response.json()
-        if data.get("results") and len(data["results"]) > 0:
-            return data["results"][0]
-        return None
-    except requests.exceptions.RequestException as e:
-        # Network-related errors (connection, timeout, DNS)
-        st.warning(f"API non accessible pour '{query}': {str(e)}. "
-                    "Utilisation des données de démonstration.")
-        return None
-    except ValueError as e:
-        # JSON parsing errors
-        st.warning(f"Erreur de format de réponse pour '{query}': {str(e)}. "
-                    "Utilisation des données de démonstration.")
-        return None
-    except Exception as e:
-        # Unexpected errors
-        st.warning(f"Erreur inattendue pour '{query}': {str(e)}. "
-                    "Utilisation des données de démonstration.")
-        return None
-
-
-def search_company_demo(query):
-    """Search for a company using demo data."""
-    query_lower = query.lower().strip()
-
-    # If SIRET, try direct lookup first, then by extracted SIREN
-    if is_siret(query_lower):
-        if query_lower in DEMO_COMPANIES:
-            return DEMO_COMPANIES[query_lower]
-        siren = extract_siren_from_siret(query_lower)
-        if siren in DEMO_COMPANIES:
-            return DEMO_COMPANIES[siren]
-
-    # Direct lookup
-    if query_lower in DEMO_COMPANIES:
-        return DEMO_COMPANIES[query_lower]
-
-    # Partial match
-    for key, value in DEMO_COMPANIES.items():
-        if query_lower in key or query_lower in value["nom_complet"].lower():
-            return value
-
+            data = response.json()
+            if data.get("results") and len(data["results"]) > 0:
+                return data["results"][0]
+            return None
+            
+        except requests.exceptions.HTTPError as e:
+            # HTTP errors (other than 429, which is handled above)
+            if attempt == API_MAX_RETRIES - 1:
+                st.warning(f"⚠️ Erreur HTTP pour '{query}': {str(e)}")
+            return None
+        except requests.exceptions.RequestException as e:
+            # Network-related errors (connection, timeout, DNS)
+            if attempt == API_MAX_RETRIES - 1:
+                st.warning(f"⚠️ API non accessible pour '{query}': {str(e)}")
+            return None
+        except ValueError as e:
+            # JSON parsing errors
+            st.warning(f"⚠️ Erreur de format de réponse pour '{query}': {str(e)}")
+            return None
+        except Exception as e:
+            # Unexpected errors
+            st.warning(f"⚠️ Erreur inattendue pour '{query}': {str(e)}")
+            return None
+    
     return None
 
 
 def extract_financial_info(company_data, original_siret=None):
-    """Extract financial and identification information from company data."""
-    # Handle the nested finances structure (demo data) or flat structure (API)
-    finances = company_data.get("finances", {})
-    siege = company_data.get("siege", {})
-
+    """Extract comprehensive information from company data including financial, 
+    legal, geographic, and leadership data."""
+    
+    # Base structures
+    finances = company_data.get("finances") or {}
+    siege = company_data.get("siege") or {}
+    complements = company_data.get("complements") or {}
+    dirigeants = company_data.get("dirigeants") or []
+    
     siren = company_data.get("siren", "N/A")
-
-    # Determine SIRET: use original if provided, else from siege, else from data
-    siret = original_siret or siege.get("siret",
-                company_data.get("siret", "N/A"))
-
+    siret = original_siret or siege.get("siret", company_data.get("siret", "N/A"))
+    
     # SIREN verification status
-    if siren and siren != "N/A":
-        siren_verifie = "✅ Vérifié"
-    else:
-        siren_verifie = "❌ Non trouvé"
-
-    # Financial data: try nested finances first, then flat keys
-    ca = finances.get("ca", company_data.get("ca", "N/A"))
-    resultat_net = finances.get("resultat_net",
-                                company_data.get("resultat", "N/A"))
-    cloture = finances.get("date_cloture_exercice",
-                           company_data.get("cloture",
-                           company_data.get("date_cloture_exercice", "N/A")))
-
+    siren_verifie = "✅ Vérifié" if siren and siren != "N/A" else "❌ Non trouvé"
+    
+    # Financial data - récupérer l'année la plus récente
+    ca = "N/A"
+    resultat_net = "N/A"
+    annee_finance = "N/A"
+    finances_publiees = "Non"
+    
+    if finances:
+        # L'API retourne un dict avec l'année comme clé: {"2024": {"ca": ..., "resultat_net": ...}}
+        latest_year = max(finances.keys()) if finances else None
+        if latest_year:
+            annee_finance = latest_year
+            year_data = finances[latest_year]
+            ca = year_data.get("ca", "N/A")
+            resultat_net = year_data.get("resultat_net", "N/A")
+            finances_publiees = "Oui"
+    
+    # Dirigeants - formater la liste
+    dirigeants_str = "N/A"
+    if dirigeants:
+        dir_list = []
+        for d in dirigeants[:5]:  # Limiter à 5 premiers
+            if d.get("type_dirigeant") == "personne physique":
+                nom = f"{d.get('prenoms', '')} {d.get('nom', '')}".strip()
+                qualite = d.get('qualite', '')
+                dir_list.append(f"{nom} ({qualite})")
+            else:
+                denom = d.get('denomination', '')
+                qualite = d.get('qualite', '')
+                dir_list.append(f"{denom} ({qualite})")
+        dirigeants_str = " | ".join(dir_list)
+        if len(dirigeants) > 5:
+            dirigeants_str += f" | ... (+{len(dirigeants)-5})"
+    
+    # Coordonnées géographiques
+    latitude = siege.get("latitude", "N/A")
+    longitude = siege.get("longitude", "N/A")
+    coords = f"{latitude}, {longitude}" if latitude != "N/A" and longitude != "N/A" else "N/A"
+    
+    # Certifications et labels
+    certifications = []
+    if complements.get("est_qualiopi"):
+        certifications.append("Qualiopi")
+    if complements.get("est_rge"):
+        certifications.append("RGE")
+    if complements.get("est_bio"):
+        certifications.append("Bio")
+    if complements.get("est_ess"):
+        certifications.append("ESS")
+    if complements.get("est_societe_mission"):
+        certifications.append("Société à mission")
+    if complements.get("est_service_public"):
+        certifications.append("Service public")
+    certifications_str = ", ".join(certifications) if certifications else "Aucune"
+    
+    # Conventions collectives
+    idcc_list = complements.get("liste_idcc", [])
+    idcc_str = ", ".join(idcc_list) if idcc_list else "N/A"
+    
     info = {
+        # Identification
         "SIRET": siret,
         "SIREN": siren,
         "Vérification SIREN": siren_verifie,
-        "Nom": company_data.get("nom_complet",
-                                company_data.get("nom_raison_sociale", "N/A")),
-        "État administratif": _format_etat(
-            company_data.get("etat_administratif", "N/A")),
+        "Nom": company_data.get("nom_complet", company_data.get("nom_raison_sociale", "N/A")),
+        "Sigle": company_data.get("sigle", "N/A"),
+        
+        # État et structure
+        "État administratif": _format_etat(company_data.get("etat_administratif", "N/A")),
+        "Date de création": company_data.get("date_creation", "N/A"),
         "Catégorie": company_data.get("categorie_entreprise", "N/A"),
         "Nature juridique": company_data.get("nature_juridique", "N/A"),
+        
+        # Activité
         "Activité principale": siege.get("activite_principale", "N/A"),
-        "Effectif salarié": company_data.get(
-            "tranche_effectif_salarie", "N/A"),
-        "Nombre d'établissements": company_data.get(
-            "nombre_etablissements", "N/A"),
-        "Date de création": company_data.get("date_creation", "N/A"),
+        "Effectif salarié": company_data.get("tranche_effectif_salarie", "N/A"),
+        "Année effectif": company_data.get("annee_tranche_effectif_salarie", "N/A"),
+        "Nombre d'établissements": company_data.get("nombre_etablissements", "N/A"),
+        "Établissements ouverts": company_data.get("nombre_etablissements_ouverts", "N/A"),
+        
+        # Finances
+        "Données financières publiées": finances_publiees,
+        "Année finances": annee_finance,
         "Chiffre d'affaires (CA)": _format_currency(ca),
         "Résultat net": _format_currency(resultat_net),
-        "Date clôture exercice": cloture,
-        "Adresse siège": siege.get("adresse", "N/A"),
+        
+        # Localisation
+        "Adresse siège": siege.get("geo_adresse", siege.get("adresse", "N/A")),
+        "Code postal": siege.get("code_postal", "N/A"),
+        "Commune": siege.get("libelle_commune", "N/A"),
+        "Département": siege.get("departement", "N/A"),
+        "Région": siege.get("region", "N/A"),
+        "Coordonnées GPS": coords,
+        
+        # Dirigeants
+        "Dirigeants": dirigeants_str,
+        
+        # Certifications et labels
+        "Certifications": certifications_str,
+        "Conventions collectives (IDCC)": idcc_str,
+        
+        # Compléments
+        "Organisme de formation": "Oui" if complements.get("est_organisme_formation") else "Non",
+        "Entrepreneur spectacle": "Oui" if complements.get("est_entrepreneur_spectacle") else "Non",
     }
-
+    
     return info
 
 
@@ -498,25 +273,48 @@ def _format_currency(value):
 
 
 def process_companies(queries):
-    """Process multiple company queries."""
+    """Process multiple company queries.
+    
+    Args:
+        queries: List of strings (company names) or tuples (name, siret/siren)
+    """
     results = []
+    total = len(queries)
+    
+    # Estimation du temps si on utilise l'API
+    if USE_API and total > 1:
+        estimated_time = total * API_DELAY_SECONDS
+        if estimated_time > 5:
+            st.info(f"⏱️ Traitement de {total} entreprise(s). "
+                   f"Temps estimé : ~{int(estimated_time)} secondes "
+                   f"(rate limiting API respecté)")
 
-    for query in queries:
-        query = query.strip()
+    for idx, query_data in enumerate(queries, 1):
+        # query_data peut être un string ou un tuple (nom, siret/siren)
+        if isinstance(query_data, tuple):
+            name, siret_siren = query_data
+            # Utiliser le SIRET/SIREN en priorité s'il existe
+            query = siret_siren.strip() if siret_siren and str(siret_siren).strip() and str(siret_siren).strip() != 'nan' else name.strip()
+            display_name = name if name and str(name).strip() and str(name).strip() != 'nan' else query
+        else:
+            query = query_data.strip()
+            display_name = query
+            
         if not query:
             continue
 
-        with st.spinner(f"Recherche de '{query}'..."):
+        # Progress indicator pour les gros fichiers
+        if total > 5:
+            progress_text = f"({idx}/{total})"
+        else:
+            progress_text = ""
+            
+        with st.spinner(f"Recherche {progress_text} '{display_name}'..."):
             company_data = None
             original_siret = query if is_siret(query) else None
 
-            # Try API first if available
-            if USE_API:
-                company_data = search_company_api(query)
-
-            # Fall back to demo data
-            if not company_data:
-                company_data = search_company_demo(query)
+            # Recherche via l'API publique
+            company_data = search_company_api(query)
 
             if company_data:
                 info = extract_financial_info(company_data, original_siret)
@@ -547,7 +345,11 @@ def process_companies(queries):
 
 
 def read_uploaded_file(uploaded_file):
-    """Read SIRET numbers from an uploaded CSV or Excel file."""
+    """Read company data from an uploaded CSV or Excel file.
+    
+    Returns:
+        List of tuples (name, siret_siren) or strings if only one column
+    """
     try:
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file, dtype=str)
@@ -559,33 +361,69 @@ def read_uploaded_file(uploaded_file):
                      "Utilisez CSV ou Excel (.xlsx/.xls).")
             return []
 
-        # Try to find a column containing SIRET numbers
+        # Detect name column
+        name_col = None
+        for col in df.columns:
+            col_lower = col.lower().strip()
+            if any(keyword in col_lower for keyword in ['nom', 'name', 'entreprise', 'societe', 'société', 'company', 'raison']):
+                name_col = col
+                st.info(f"✅ Colonne de noms détectée : '{col}'")
+                break
+        
+        # Detect SIRET column
         siret_col = None
         for col in df.columns:
             col_lower = col.lower().strip()
             if 'siret' in col_lower:
                 siret_col = col
+                st.info(f"✅ Colonne SIRET détectée : '{col}'")
                 break
 
-        # If no SIRET column found, try SIREN column
+        # Detect SIREN column (only if no SIRET)
+        siren_col = None
         if siret_col is None:
             for col in df.columns:
                 col_lower = col.lower().strip()
                 if 'siren' in col_lower:
-                    siret_col = col
+                    siren_col = col
+                    st.info(f"✅ Colonne SIREN détectée : '{col}'")
                     break
 
-        # If still not found, use the first column
-        if siret_col is None:
-            siret_col = df.columns[0]
-            st.info(f"Aucune colonne 'SIRET' trouvée. "
-                    f"Utilisation de la colonne '{siret_col}'.")
+        # Determine what data we have
+        id_col = siret_col or siren_col
+        
+        if name_col and id_col:
+            # Best case: both name and SIRET/SIREN
+            st.success(f"🎯 Mode optimal : Noms + SIRET/SIREN détectés")
+            values = []
+            for _, row in df.iterrows():
+                name = row[name_col] if pd.notna(row[name_col]) else None
+                id_val = row[id_col] if pd.notna(row[id_col]) else None
+                # Skip empty rows
+                if name or id_val:
+                    values.append((str(name) if name else '', str(id_val) if id_val else ''))
+            return values
+            
+        elif name_col:
+            # Only names
+            st.info(f"📋 Mode : Noms uniquement (colonne '{name_col}')")
+            values = df[name_col].dropna().astype(str).str.strip()
+            return [v for v in values if v and v != 'nan']
+            
+        elif id_col:
+            # Only SIRET/SIREN
+            st.info(f"📋 Mode : SIRET/SIREN uniquement (colonne '{id_col}')")
+            values = df[id_col].dropna().astype(str).str.strip()
+            return [v for v in values if v and v != 'nan']
+            
+        else:
+            # Fallback: use first column
+            first_col = df.columns[0]
+            st.warning(f"⚠️ Aucune colonne reconnue. Utilisation de la première colonne : '{first_col}'")
+            values = df[first_col].dropna().astype(str).str.strip()
+            return [v for v in values if v and v != 'nan']
 
-        # Extract non-empty values
-        values = df[siret_col].dropna().astype(str).str.strip()
-        values = [v for v in values if v and v != 'nan']
-
-        return values
+        return []
     except Exception as e:
         st.error(f"Erreur lors de la lecture du fichier : {str(e)}")
         return []
@@ -621,18 +459,27 @@ def display_results(results, section_key=""):
     """Display results in a table with download options."""
     if results:
         df = pd.DataFrame(results)
+        
+        # Convert all columns to string to avoid Arrow serialization issues
+        for col in df.columns:
+            df[col] = df[col].astype(str)
 
         # Display results
-        st.markdown("### 📊 Résultats — Données financières")
+        st.markdown("### 📊 Résultats — Données enrichies")
+        st.markdown("*Données d'identification, financières, géographiques, dirigeants et certifications*")
         st.dataframe(df, use_container_width=True)
 
         # Summary
         verified = sum(1 for r in results
                        if r.get("Vérification SIREN") == "✅ Vérifié")
         not_found = len(results) - verified
+        with_finances = sum(1 for r in results
+                           if r.get("Données financières publiées") == "Oui")
+        
         st.markdown(
             f"**Résumé :** {verified} SIREN vérifié(s), "
-            f"{not_found} non trouvé(s) sur {len(results)} entrée(s)")
+            f"{not_found} non trouvé(s) sur {len(results)} entrée(s) | "
+            f"💰 {with_finances} avec données financières ({(with_finances/len(results)*100):.0f}%)")
 
         # Export options
         st.markdown("### 📥 Exporter les Résultats")
@@ -652,25 +499,27 @@ def display_results(results, section_key=""):
 # ──────────────────────────────────────────────────────
 
 tab_file, tab_manual = st.tabs([
-    "📁 Import fichier (SIRET)",
-    "✏️ Saisie manuelle",
+    "📁 Import fichier",
+    "✏️ Recherche par nom",
 ])
 
 # ── Tab 1: File upload ────────────────────────────────
 with tab_file:
     st.markdown("### Importer un fichier d'entreprises")
     st.markdown(
-        "Importez un fichier **CSV** ou **Excel** contenant une colonne "
-        "**SIRET**. Le SIREN sera extrait automatiquement (9 premiers "
-        "chiffres du SIRET), vérifié via l'API de l'État, et les "
-        "données financières seront récupérées."
+        "Importez un fichier **CSV** ou **Excel** :\n\n"
+        "**Format recommandé (2 colonnes) :**\n"
+        "- Colonne A : Nom entreprise\n"
+        "- Colonne B : SIRET ou SIREN (optionnel)\n\n"
+        "**Format simple (1 colonne) :**\n"
+        "- Noms d'entreprises OU SIRET/SIREN"
     )
 
     uploaded_file = st.file_uploader(
         "Choisir un fichier CSV ou Excel",
         type=["csv", "xlsx", "xls"],
-        help="Le fichier doit contenir une colonne SIRET "
-             "(ou la première colonne sera utilisée).",
+        help="Le fichier peut contenir des noms d'entreprises, SIRET, ou SIREN. "
+             "L'app détectera automatiquement le type de données.",
     )
 
     if uploaded_file is not None:
@@ -683,20 +532,28 @@ with tab_file:
             # Show preview
             with st.expander("Aperçu des données importées"):
                 preview_data = []
-                for s in siret_list[:10]:
-                    siren = extract_siren_from_siret(s) if is_siret(s) else s
-                    preview_data.append({
-                        "Valeur importée": s,
-                        "SIREN extrait": siren if is_siret(s) else "—",
-                        "Type": "SIRET" if is_siret(s)
-                               else ("SIREN" if is_siren(s) else "Nom"),
-                    })
+                for item in siret_list[:10]:
+                    if isinstance(item, tuple):
+                        name, id_val = item
+                        type_val = "SIRET" if is_siret(id_val) else ("SIREN" if is_siren(id_val) else "—")
+                        preview_data.append({
+                            "Nom entreprise": name if name and name != 'nan' else "—",
+                            "SIRET/SIREN": id_val if id_val and id_val != 'nan' else "—",
+                            "Type ID": type_val,
+                        })
+                    else:
+                        s = item
+                        type_val = "SIRET" if is_siret(s) else ("SIREN" if is_siren(s) else "Nom")
+                        preview_data.append({
+                            "Valeur importée": s,
+                            "Type": type_val,
+                        })
                 st.dataframe(pd.DataFrame(preview_data),
                              use_container_width=True)
                 if len(siret_list) > 10:
                     st.caption(f"… et {len(siret_list) - 10} autre(s)")
 
-            if st.button("🔍 Vérifier et récupérer les données financières",
+            if st.button("🔍 Rechercher et enrichir les données",
                          type="primary", key="btn_file"):
                 with st.spinner("Traitement en cours..."):
                     results = process_companies(siret_list)
@@ -704,15 +561,15 @@ with tab_file:
 
 # ── Tab 2: Manual input ──────────────────────────────
 with tab_manual:
-    st.markdown("### Saisie des Entreprises")
-    st.markdown("Entrez les noms d'entreprises, numéros SIREN ou SIRET "
-                "(un par ligne)")
+    st.markdown("### Recherche d'Entreprises par Nom")
+    st.markdown("**Entrez les noms d'entreprises** (un par ligne). "
+                "Vous pouvez aussi ajouter SIREN ou SIRET pour plus de précision.")
 
     user_input = st.text_area(
-        "Noms d'entreprises, SIREN ou SIRET",
+        "Noms d'entreprises (ou SIRET/SIREN)",
         height=150,
-        placeholder="Exemple:\nAirbus\n383474814\n38347481400019\n"
-                    "Total Energies",
+        placeholder="Exemple:\nAirbus\nTotal Energies\nOrange\nRenault\n\n"
+                    "Ou avec SIRET/SIREN:\n383474814\n38347481400019",
     )
 
     if st.button("🔍 Rechercher", type="primary", key="btn_manual"):
@@ -737,43 +594,83 @@ with tab_manual:
 with st.sidebar:
     st.markdown("### ℹ️ Instructions")
     st.markdown("""
-    **Import fichier :**
-    1. Préparez un CSV ou Excel avec une colonne SIRET
-    2. Importez le fichier
-    3. Cliquez sur "Vérifier et récupérer"
-    4. Téléchargez les résultats en CSV ou XLSX
+    **🔍 Recherche par nom (recommandé) :**
+    1. Entrez simplement les noms d'entreprises
+    2. L'API trouvera automatiquement les données
+    3. Aucune authentification requise !
+    
+    **📁 Import fichier :**
+    Format optimal : 2 colonnes
+    - Colonne A : Nom entreprise
+    - Colonne B : SIRET ou SIREN (optionnel)
+    
+    Format simple : 1 colonne
+    - Noms d'entreprises OU SIRET/SIREN
+    
+    **⏱️ Rate Limiting :**
+    L'application respecte automatiquement les limites
+    de l'API (~250 req/min max) avec marge de sécurité.
 
-    **Saisie manuelle :**
-    1. Entrez les noms, SIREN ou SIRET (un par ligne)
-    2. Cliquez sur "Rechercher"
-    3. Exportez les résultats
-
-    **Format SIRET :** 14 chiffres
-    **Format SIREN :** 9 chiffres (= 9 premiers chiffres du SIRET)
+    **💡 SIRET/SIREN (optionnel) :**
+    - **SIRET :** 14 chiffres
+    - **SIREN :** 9 chiffres
+    - Utilisez-les pour une recherche plus précise
     """)
 
     # Show mode
-    if USE_API:
-        st.info("🌐 Mode : API (recherche-entreprises.api.gouv.fr)")
-    else:
-        st.warning("📊 Mode : Démonstration (données d'exemple)")
+    st.success("🌐 Mode : API publique (recherche-entreprises.api.gouv.fr)")
+    st.caption(f"⏱️ Rate limiting : {API_DELAY_SECONDS}s entre requêtes | Max {API_MAX_RETRIES} tentatives")
 
-    st.markdown("### 📊 Données extraites")
+    st.markdown("### 📊 Données extraites (enrichies)")
     st.markdown("""
-    - SIRET / SIREN
-    - Vérification du SIREN
-    - Nom de l'entreprise
+    **🔍 Identification :**
+    - SIRET / SIREN / Sigle
+    - Nom complet
+    - Vérification SIREN
+    
+    **🏢 État et structure :**
     - État administratif
+    - Date de création
     - Catégorie d'entreprise
     - Nature juridique
     - Activité principale (NAF)
-    - Effectif salarié
-    - Nombre d'établissements
-    - Date de création
-    - **Chiffre d'affaires (CA)**
-    - **Résultat net**
-    - Date de clôture d'exercice
-    - Adresse du siège
+    
+    **👥 Effectifs et établissements :**
+    - Tranche d'effectif salarié
+    - Année de l'effectif
+    - Nombre total d'établissements
+    - Établissements ouverts
+    
+    **💰 Données financières :**
+    - Année des finances
+    - **Données financières publiées** (Oui/Non)
+    - Chiffre d'affaires (CA)
+    - Résultat net
+    
+    ⚠️ **Important** : Seules les GE, ETI et sociétés cotées
+    publient leurs comptes. ~80% des entreprises françaises
+    (PME, micro-entreprises) n'y sont PAS obligées.
+    
+    **📍 Localisation :**
+    - Adresse complète du siège
+    - Code postal, Commune
+    - Département, Région
+    - Coordonnées GPS (latitude/longitude)
+    
+    **👤 Dirigeants :**
+    - Liste des dirigeants et leurs fonctions
+    - Direction générale
+    - Commissaires aux comptes
+    
+    **🏆 Certifications et labels :**
+    - Qualiopi, RGE, Bio, ESS
+    - Société à mission
+    - Service public
+    - Conventions collectives (IDCC)
+    
+    **✨ Autres :**
+    - Organisme de formation
+    - Entrepreneur spectacle
     """)
 
     st.markdown("---")
