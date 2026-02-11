@@ -3,12 +3,12 @@ un repo pour les requêtes ponctuelles osint
 
 ## 🏢 Application de Recherche d'Entreprises
 
-Application Streamlit pour rechercher des entreprises françaises via le serveur MCP data.gouv.fr.
+Application Streamlit pour rechercher des entreprises françaises via l'API officielle de data.gouv.fr.
 
 ### Fonctionnalités
 
 - Recherche d'entreprises par nom ou numéro SIREN
-- Extraction automatique des données financières (CA, Résultat, Date de clôture)
+- Extraction automatique des données d'entreprise (Nom, SIREN, informations de base)
 - Affichage des résultats dans un tableau interactif
 - Export des données en CSV ou XLSX
 
@@ -29,9 +29,7 @@ Application Streamlit pour rechercher des entreprises françaises via le serveur
    pip install -r requirements.txt
    ```
 
-2. Assurez-vous que Node.js est installé (pour npx)
-
-3. Lancez l'application :
+2. Lancez l'application :
    ```bash
    streamlit run app.py
    ```
@@ -41,3 +39,7 @@ Application Streamlit pour rechercher des entreprises françaises via le serveur
 - **Entrée :** Noms d'entreprises ou numéros SIREN (un par ligne)
 - **Sortie :** Tableau avec Nom, SIREN, CA, Résultat, Date de clôture
 - **Export :** CSV ou XLSX
+
+### API utilisée
+
+Cette application utilise l'[API Recherche Entreprises](https://recherche-entreprises.api.gouv.fr/docs/) de data.gouv.fr pour obtenir les informations sur les entreprises françaises.
