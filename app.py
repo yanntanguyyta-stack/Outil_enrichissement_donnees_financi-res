@@ -450,8 +450,8 @@ def extract_financial_info(company_data, original_siret=None):
 
     # Financial data: try nested finances first, then flat keys
     ca = finances.get("ca", company_data.get("ca", "N/A"))
-    resultat = finances.get("resultat_net",
-                            company_data.get("resultat", "N/A"))
+    resultat_net = finances.get("resultat_net",
+                                company_data.get("resultat", "N/A"))
     cloture = finances.get("date_cloture_exercice",
                            company_data.get("cloture",
                            company_data.get("date_cloture_exercice", "N/A")))
@@ -473,7 +473,7 @@ def extract_financial_info(company_data, original_siret=None):
             "nombre_etablissements", "N/A"),
         "Date de création": company_data.get("date_creation", "N/A"),
         "Chiffre d'affaires (CA)": _format_currency(ca),
-        "Résultat net": _format_currency(resultat),
+        "Résultat net": _format_currency(resultat_net),
         "Date clôture exercice": cloture,
         "Adresse siège": siege.get("adresse", "N/A"),
     }
@@ -554,7 +554,8 @@ def read_uploaded_file(uploaded_file):
         elif uploaded_file.name.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(uploaded_file, dtype=str)
         else:
-            st.error("Format de fichier non supporté. "
+            ext = uploaded_file.name.rsplit('.', 1)[-1] if '.' in uploaded_file.name else '(inconnu)'
+            st.error(f"Format de fichier non supporté (.{ext}). "
                      "Utilisez CSV ou Excel (.xlsx/.xls).")
             return []
 
