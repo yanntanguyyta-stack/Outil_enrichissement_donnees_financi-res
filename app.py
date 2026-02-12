@@ -57,6 +57,9 @@ st.markdown("""
 
     /* Remove sidebar shadow */
     [data-testid="stSidebar"] { background: #fafafa; }
+    
+    /* Info boxes styling */
+    .stAlert { margin-top: 0.5rem; margin-bottom: 0.5rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -585,68 +588,160 @@ def display_results(results, section_key=""):
 
 # ── Main UI ──────────────────────────────────────────
 
-tab_file, tab_manual = st.tabs(["📁 Import fichier", "✏️ Saisie manuelle"])
+# Section 1: Import de données
+st.markdown("### 📥 Import de données")
 
-with tab_file:
-    st.markdown("#### Importer un fichier")
+# Onglets pour choix du mode d'entrée
+input_tab1, input_tab2 = st.tabs(["📁 Fichier", "✏️ Saisie manuelle"])
+
+queries_to_process = None
+
+with input_tab1:
     st.caption("CSV ou Excel — colonnes détectées automatiquement (nom, SIRET, SIREN)")
-
-    uploaded_file = st.file_uploader(
-        "Fichier CSV / Excel",
-        type=["csv", "xlsx", "xls"],
-    )
-
-    if uploaded_file is not None:
-        siret_list = read_uploaded_file(uploaded_file)
-        if siret_list:
-            st.info(f"{len(siret_list)} entrée(s) détectée(s)")
-            if st.button("🔍 Lancer la recherche", type="primary", key="btn_file"):
-                results = process_companies(siret_list)
-                st.session_state["results_file"] = results
-            
-            # Afficher les résultats persistés (survivent au rerun des download_button)
-            if "results_file" in st.session_state and st.session_state["results_file"]:
-                display_results(st.session_state["results_file"], section_key="file")
-
-with tab_manual:
-    st.markdown("#### Recherche manuelle")
-    st.caption("Un nom, SIREN ou SIRET par ligne")
-
-    user_input = st.text_area(
-        "Entreprises",
-        height=120,
-        placeholder="Airbus\nTotal Energies\n383474814",
-    )
-
-    if st.button("🔍 Rechercher", type="primary", key="btn_manual"):
-        if user_input:
-            queries = [l.strip() for l in user_input.split("\n") if l.strip()]
-            if queries:
-                results = process_companies(queries)
-                st.session_state["results_manual"] = results
-            else:
-                st.warning("Entrez au moins une entreprise.")
-        else:
-            st.warning("Entrez au moins une entreprise.")
     
-    # Afficher les résultats persistés (survivent au rerun des download_button)
-    if "results_manual" in st.session_state and st.session_state["results_manual"]:
-        display_results(st.session_state["results_manual"], section_key="manual")
+    uploaded_file = st.file_uploader(
+        "Choisissez un fichier",
+        type=["csv", "xlsx", "xls"],
+        key="main_file_upload"
+    )
+    
+    if uploaded_file is not None:
+        queries_to_process = read_uploaded_file(uploaded_file)
+        if queries_to_process:
+            st.success(f"✅ {len(queries_to_process)} entrée(s) détectée(s)")
+
+with input_tab2:
+    st.caption("Un nom, SIREN ou SIRET par ligne")
+    
+    user_input = st.text_area(
+        "Entreprises à rechercher",
+        height=150,
+        placeholder="Airbus\nTotal Energies\n383474814\n552032534",
+        key="manual_input"
+    )
+    
+    if user_input:
+        queries = [l.strip() for l in user_input.split("\n") if l.strip()]
+        if queries:
+            queries_to_process = queries
+            st.success(f"✅ {len(queries)} entreprise(s) saisie(s)")
+
+# Section 2: Choix de la source de données
+st.markdown("---")
+st.markdown("### ⚙️ Source des données")
+
+# Vérifier la disponibilité de Pappers
+try:
+    from enrichment_pappers import check_api_key, SCRAPING_ENABLED
+    PAPPERS_AVAILABLE = check_api_key() or SCRAPING_ENABLED
+except ImportError:
+    PAPPERS_AVAILABLE = False
+
+# Options disponibles
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("🏛️ DINUM", use_container_width=True, help="API officielle de l'État", type="secondary"):
+        st.session_state["data_source"] = "dinum"
+
+with col2:
+    rne_help = "Base locale RNE/INPI" if FINANCES_AVAILABLE and db_available() else "Base RNE non disponible"
+    rne_disabled = not (FINANCES_AVAILABLE and db_available())
+    if st.button("📊 RNE", use_container_width=True, help=rne_help, disabled=rne_disabled, type="secondary"):
+        st.session_state["data_source"] = "rne"
+
+with col3:
+    pappers_help = "RNE + enrichissement Pappers" if PAPPERS_AVAILABLE else "Pappers non configuré"
+    pappers_disabled = not PAPPERS_AVAILABLE
+    if st.button("💰 RNE + Pappers", use_container_width=True, help=pappers_help, disabled=pappers_disabled, type="secondary"):
+        st.session_state["data_source"] = "rne_pappers"
+
+# Afficher la source sélectionnée
+if "data_source" in st.session_state:
+    source_labels = {
+        "dinum": "🏛️ DINUM (API officielle)",
+        "rne": "📊 RNE (Base locale)",
+        "rne_pappers": "💰 RNE + Pappers (Enrichissement complet)"
+    }
+    st.info(f"**Source active :** {source_labels.get(st.session_state['data_source'], 'Non sélectionnée')}")
+else:
+    st.warning("⚠️ Sélectionnez une source de données ci-dessus")
+
+# Section 3: Bouton de recherche (actif seulement si données + source)
+st.markdown("---")
+
+if queries_to_process and "data_source" in st.session_state:
+    if st.button("🔍 Lancer l'enrichissement", type="primary", use_container_width=True, key="btn_enrich"):
+        with st.spinner("Traitement en cours..."):
+            # Traiter selon la source sélectionnée
+            if st.session_state["data_source"] == "dinum":
+                results = process_companies(queries_to_process)
+            elif st.session_state["data_source"] == "rne":
+                results = process_companies(queries_to_process)  # Utilise déjà RNE automatiquement
+            elif st.session_state["data_source"] == "rne_pappers":
+                # TODO: Intégrer l'enrichissement Pappers
+                st.warning("⚠️ L'enrichissement Pappers sera intégré prochainement")
+                results = process_companies(queries_to_process)
+            
+            st.session_state["results_main"] = results
+            st.success("✅ Enrichissement terminé !")
+    
+    # Afficher les résultats persistés
+    if "results_main" in st.session_state and st.session_state["results_main"]:
+        display_results(st.session_state["results_main"], section_key="main")
+elif not queries_to_process:
+    st.info("📤 Importez un fichier ou saisissez des entreprises pour commencer")
+elif "data_source" not in st.session_state:
+    st.info("⚙️ Sélectionnez une source de données")
 
 # ── Sidebar (minimal) ──
 
 with st.sidebar:
     st.markdown("### ℹ️ À propos")
-    st.caption("Données officielles via l'API de l'État français.")
-
-    if FINANCES_AVAILABLE and db_available():
-        st.success("✅ Base financière SQLite disponible")
-        age = db_age_days()
-        if age is not None:
-            st.caption(f"Dernière mise à jour : il y a {age} jour(s)")
-    else:
-        st.info("💡 Pas de base financière locale. Seules les données DINUM sont utilisées.")
+    st.caption("Outil d'enrichissement de données d'entreprises françaises")
 
     st.markdown("---")
-    st.caption("⚠️ Seules 10-20 % des entreprises publient leurs comptes.")
-    st.markdown("[API Recherche Entreprises](https://recherche-entreprises.api.gouv.fr/)")
+    st.markdown("### 📊 Sources de données")
+    
+    # DINUM (toujours disponible)
+    st.markdown("**🏛️ DINUM**")
+    st.caption("✅ API officielle de l'État")
+    st.caption("→ Données d'identification et légales")
+    
+    # RNE (base locale)
+    st.markdown("**📊 RNE / INPI**")
+    if FINANCES_AVAILABLE and db_available():
+        st.caption("✅ Base SQLite disponible")
+        age = db_age_days()
+        if age is not None:
+            if age > DB_AGE_WARNING_DAYS:
+                st.caption(f"⚠️ Mise à jour : il y a {age} jours")
+            else:
+                st.caption(f"📅 Mise à jour : il y a {age} jours")
+        st.caption("→ Données financières locales")
+    else:
+        st.caption("❌ Base non disponible")
+        st.caption("→ Exécutez `python build_rne_db.py`")
+    
+    # Pappers
+    st.markdown("**💰 Pappers.fr**")
+    try:
+        from enrichment_pappers import check_api_key, SCRAPING_ENABLED
+        has_api = check_api_key()
+        has_scraping = SCRAPING_ENABLED
+        
+        if has_api:
+            st.caption("✅ API configurée")
+            st.caption("→ Enrichissement complet disponible")
+        elif has_scraping:
+            st.caption("⚠️ Mode scraping activé")
+            st.caption("→ Plus lent mais gratuit")
+        else:
+            st.caption("❌ Non configuré")
+            st.caption("→ Ajoutez une clé dans `.env`")
+    except ImportError:
+        st.caption("❌ Module non disponible")
+
+    st.markdown("---")
+    st.caption("⚠️ 10-20 % des entreprises publient leurs comptes")
+    st.markdown("[Documentation API](https://recherche-entreprises.api.gouv.fr/)")

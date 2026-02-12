@@ -136,32 +136,48 @@ def extract_bilans_from_json(data: Any) -> List[Tuple]:
         metrics: Dict[str, Optional[int]] = {}
         metrics_prev: Dict[str, Optional[int]] = {}
 
-        # Try bilanSaisi.bilan.detail.pages structure
-        pages = []
-        bilan_saisi = item.get("bilanSaisi", {})
-        if isinstance(bilan_saisi, dict):
-            bilan = bilan_saisi.get("bilan", {})
-            if isinstance(bilan, dict):
-                detail = bilan.get("detail", {})
-                if isinstance(detail, dict):
-                    pages = detail.get("pages", [])
+        # Try "metrics" structure first (common in cache files)
+        metrics_dict = item.get("metrics", {})
+        if isinstance(metrics_dict, dict):
+            for code, (col_n, col_n1) in LIASSE_MAP.items():
+                metric_data = metrics_dict.get(code, {})
+                if isinstance(metric_data, dict):
+                    m1 = _parse_amount(metric_data.get("m1"))
+                    m2 = _parse_amount(metric_data.get("m2"))
+                    if m1 is not None:
+                        metrics[col_n] = m1
+                    if m2 is not None:
+                        metrics_prev[col_n1] = m2
 
-        for page in pages:
-            if not isinstance(page, dict):
-                continue
-            liasses = page.get("lignes", [])
-            if not isinstance(liasses, list):
-                continue
-            for liasse in liasses:
-                if not isinstance(liasse, dict):
+        # Try bilanSaisi.bilan.detail.pages structure (alternative format)
+        if not metrics:
+            pages = []
+            bilan_saisi = item.get("bilanSaisi", {})
+            if isinstance(bilan_saisi, dict):
+                bilan = bilan_saisi.get("bilan", {})
+                if isinstance(bilan, dict):
+                    detail = bilan.get("detail", {})
+                    if isinstance(detail, dict):
+                        pages = detail.get("pages", [])
+
+            for page in pages:
+                if not isinstance(page, dict):
                     continue
-                code = liasse.get("code", "")
-                if code in LIASSE_CODES:
-                    m1 = _parse_amount(liasse.get("m1"))
-                    m2 = _parse_amount(liasse.get("m2"))
-                    col_n, col_n1 = LIASSE_MAP[code]
-                    metrics[col_n] = m1
-                    metrics_prev[col_n1] = m2
+                liasses = page.get("lignes", [])
+                if not isinstance(liasses, list):
+                    continue
+                for liasse in liasses:
+                    if not isinstance(liasse, dict):
+                        continue
+                    code = liasse.get("code", "")
+                    if code in LIASSE_CODES:
+                        m1 = _parse_amount(liasse.get("m1"))
+                        m2 = _parse_amount(liasse.get("m2"))
+                        col_n, col_n1 = LIASSE_MAP[code]
+                        if m1 is not None:
+                            metrics[col_n] = m1
+                        if m2 is not None:
+                            metrics_prev[col_n1] = m2
 
         # Also try flat structure (already extracted data)
         for code, (col_n, col_n1) in LIASSE_MAP.items():
