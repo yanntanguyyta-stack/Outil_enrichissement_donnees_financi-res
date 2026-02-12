@@ -21,7 +21,7 @@ import requests
 
 # Import enrichissement RNE
 try:
-    from enrichment_hybrid import enrich_from_api_dinum_and_rne, enrich_batch_parallel
+    from enrichment_hybrid import enrich_from_api_dinum_and_rne, enrich_from_rne_only, enrich_batch_parallel
     RNE_AVAILABLE = True
 except ImportError:
     RNE_AVAILABLE = False
@@ -574,22 +574,53 @@ def process_companies(queries):
             with st.spinner(f"Recherche {progress_text} '{display_name}'..."):
                 company_data = None
                 original_siret = query if is_siret(query) else None
-
-                # Recherche via l'API publique
-                company_data = search_company_api(query)
-
-                if company_data:
-                    # Enrichissement RNE si activé (mode simple)
-                    rne_data = None
-                    if 'use_rne' in st.session_state and st.session_state.use_rne:
-                        siren = company_data.get("siren")
-                        if siren and RNE_AVAILABLE:
-                            try:
-                                with st.spinner(f"🏛️ Enrichissement RNE pour {siren}..."):
-                                    rne_data = enrich_from_api_dinum_and_rne(siren, max_bilans=10)
-                            except Exception as e:
-                                st.warning(f"⚠️ Erreur enrichissement RNE pour {siren}: {str(e)}")
+                rne_data = None
+                
+                # Vérifier le mode d'enrichissement
+                use_rne = 'use_rne' in st.session_state and st.session_state.use_rne
+                enrichment_mode = st.session_state.get('enrichment_mode', 'Pappers + RNE')
+                
+                # MODE RNE SEUL : Utiliser uniquement RNE (sans Pappers)
+                if use_rne and enrichment_mode == "RNE seul" and RNE_AVAILABLE:
+                    # Extraire SIREN du SIRET ou utiliser directement le SIREN
+                    siren = extract_siren_from_siret(query) if is_siret(query) else query
                     
+                    try:
+                        with st.spinner(f"🏛️ Enrichissement RNE seul pour {siren}..."):
+                            rne_data = enrich_from_rne_only(siren, max_bilans=10)
+                            
+                            if rne_data.get("success"):
+                                # Créer company_data depuis RNE pour compatibilité avec extract_financial_info
+                                company_data = {
+                                    "siren": rne_data.get("siren"),
+                                    "nom_complet": rne_data.get("denomination"),
+                                    "siege": {
+                                        "siret": rne_data.get("siret") or original_siret
+                                    }
+                                }
+                            else:
+                                st.warning(f"⚠️ Aucune donnée RNE pour {siren}: {rne_data.get('error', 'Erreur inconnue')}")
+                    except Exception as e:
+                        st.error(f"❌ Erreur enrichissement RNE pour {siren}: {str(e)}")
+                
+                # MODE PAPPERS + RNE (classique)
+                else:
+                    # Recherche via l'API publique (Pappers/DINUM)
+                    company_data = search_company_api(query)
+
+                    if company_data:
+                        # Enrichissement RNE si activé
+                        if use_rne:
+                            siren = company_data.get("siren")
+                            if siren and RNE_AVAILABLE:
+                                try:
+                                    with st.spinner(f"🏛️ Enrichissement RNE pour {siren}..."):
+                                        rne_data = enrich_from_api_dinum_and_rne(siren, max_bilans=10)
+                                except Exception as e:
+                                    st.warning(f"⚠️ Erreur enrichissement RNE pour {siren}: {str(e)}")
+                
+                # Traiter les résultats
+                if company_data:
                     info = extract_financial_info(company_data, original_siret, rne_data)
                     results.append(info)
                 else:
@@ -612,7 +643,8 @@ def process_companies(queries):
                         "Date clôture exercice": "N/A",
                         "Adresse siège": "N/A",
                     })
-                    st.warning(f"⚠️ Entreprise '{query}' non trouvée")
+                    mode_msg = "RNE" if (use_rne and enrichment_mode == "RNE seul") else "API"
+                    st.warning(f"⚠️ Entreprise '{query}' non trouvée ({mode_msg})")
 
     return results
 
@@ -1016,6 +1048,17 @@ with st.sidebar:
         )
         
         if use_rne:
+            # Mode d'enrichissement : Pappers + RNE ou RNE seul
+            enrichment_mode = st.radio(
+                "Mode d'enrichissement",
+                options=["Pappers + RNE", "RNE seul"],
+                help="""
+                **Pappers + RNE** : Recherche avec Pappers puis enrichit avec RNE (recommandé)
+                **RNE seul** : Utilise uniquement RNE (plus rapide si vous avez déjà des SIRETs validés)
+                """,
+                key="enrichment_mode"
+            )
+            
             # Vérifier si des fichiers sont en cache
             import os
             cache_dir = Path("/workspaces/TestsMCP/rne_cache")
