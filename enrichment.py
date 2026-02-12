@@ -35,8 +35,22 @@ DB_PATH = os.getenv("RNE_DB_PATH", "rne_finances.db")
 # ---------- SQLite helpers ----------
 
 
+def _ensure_db_decompressed() -> None:
+    """Decompress rne_finances.db.xz if the .db is missing but the .xz exists."""
+    db_path = Path(DB_PATH)
+    xz_path = db_path.with_suffix(".db.xz")
+    if not db_path.exists() and xz_path.exists():
+        import lzma
+        import shutil
+        logger.info("Décompression de %s vers %s ...", xz_path, db_path)
+        with lzma.open(xz_path, "rb") as src, open(db_path, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        logger.info("Décompression terminée (%d MB)", db_path.stat().st_size // (1024 * 1024))
+
+
 def _get_db() -> Optional[sqlite3.Connection]:
     """Return a read-only connection to the finances DB, or None."""
+    _ensure_db_decompressed()
     path = Path(DB_PATH)
     if not path.exists():
         logger.debug("SQLite DB not found at %s", DB_PATH)
@@ -47,8 +61,10 @@ def _get_db() -> Optional[sqlite3.Connection]:
 
 
 def db_available() -> bool:
-    """Check whether the SQLite database is available."""
-    return Path(DB_PATH).exists()
+    """Check whether the SQLite database is available (or can be decompressed)."""
+    db_path = Path(DB_PATH)
+    xz_path = db_path.with_suffix(".db.xz")
+    return db_path.exists() or xz_path.exists()
 
 
 def db_age_days() -> Optional[int]:

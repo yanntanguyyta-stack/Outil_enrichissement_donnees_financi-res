@@ -2,8 +2,12 @@
 rne_cache/
 rne_data/
 
-# Base SQLite RNE
+# Base SQLite RNE (non compressée)
 *.db
+*.db-shm
+*.db-wal
+# Garder la version compressée dans le repo
+!rne_finances.db.xz
 
 # Fichiers volumineux
 stock_comptes_annuels.zip
