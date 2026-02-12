@@ -1,15 +1,12 @@
 """
 Streamlit app for searching French companies using data.gouv.fr API.
 
-Integration with datagouv-mcp:
-  The app leverages the same data.gouv.fr APIs used by the datagouv-mcp server
-  (https://github.com/datagouv/datagouv-mcp) to verify SIREN numbers and retrieve
-  financial data for French companies. It accepts company names, SIRET, or SIREN
-  numbers from a file or manual input, verifies them, and returns financial data.
+Uses the unified enrichment module (enrichment.py) which combines:
+  - DINUM API for company identification
+  - SQLite database for financial data (built from RNE/INPI)
 
 IMPORTANT: This app only uses REAL data from the official French government API.
-           No demo or fake data is returned. If a company is not found or if there's
-           an API error, the result will be marked as "Not found" or "Error".
+           No demo or fake data is returned.
 """
 import streamlit as st
 import pandas as pd
@@ -19,165 +16,69 @@ import re
 import time
 import requests
 
-# Import enrichissement RNE
+# Import unified enrichment module
 try:
-    from enrichment_hybrid import enrich_from_api_dinum_and_rne, enrich_from_rne_only, enrich_batch_parallel
-    RNE_AVAILABLE = True
+    from enrichment import get_finances, db_available, db_age_days
+    FINANCES_AVAILABLE = True
 except ImportError:
-    RNE_AVAILABLE = False
-    print("⚠️ Module enrichment_hybrid non disponible")
+    FINANCES_AVAILABLE = False
 
 st.set_page_config(
-    page_title="Recherche d'Entreprises",
+    page_title="Recherche Entreprises",
     page_icon="🏢",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# CSS personnalisé pour un design moderne
+# ── Minimalist CSS ──
 st.markdown("""
 <style>
-    /* En-tête avec gradient */
-    .main-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
-        border-radius: 15px;
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    /* Clean, minimal spacing */
+    .block-container { padding-top: 2rem; max-width: 960px; }
+
+    /* Subtle header */
+    .app-header {
+        padding: 1.2rem 0 0.8rem 0;
+        border-bottom: 2px solid #e0e0e0;
+        margin-bottom: 1.5rem;
     }
-    
-    .main-header h1 {
-        font-size: 2.5rem;
-        font-weight: 700;
-        margin-bottom: 0.5rem;
-    }
-    
-    .main-header p {
-        font-size: 1.1rem;
-        opacity: 0.95;
-    }
-    
-    /* Cards stylées */
-    .info-card {
-        background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%);
-        padding: 1.5rem;
-        border-radius: 12px;
-        border-left: 5px solid #2196F3;
-        margin: 1rem 0;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.07);
-    }
-    
-    .warning-card {
-        background: linear-gradient(135deg, #FFF3E0 0%, #FFE0B2 100%);
-        padding: 1.5rem;
-        border-radius: 12px;
-        border-left: 5px solid #FF9800;
-        margin: 1rem 0;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.07);
-    }
-    
-    /* Tabs améliorés */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background-color: #f0f2f6;
-        border-radius: 10px 10px 0 0;
-        padding: 10px 20px;
-        font-weight: 600;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white !important;
-    }
-    
-    /* Boutons améliorés */
+    .app-header h1 { font-size: 1.6rem; font-weight: 600; margin: 0; color: #1a1a2e; }
+    .app-header p  { font-size: 0.9rem; color: #666; margin: 0.3rem 0 0 0; }
+
+    /* Clean buttons */
     .stButton > button {
-        border-radius: 25px;
-        padding: 0.6rem 2rem;
-        font-weight: 600;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: all 0.3s ease;
+        border-radius: 6px;
+        font-weight: 500;
+        padding: 0.5rem 1.5rem;
     }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
-    }
-    
-    /* DataFrames stylés */
-    .dataframe {
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }
-    
-    /* Sidebar amélioré */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
-    }
-    
-    /* Métriques stylées */
-    [data-testid="stMetricValue"] {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #667eea;
-    }
-    
-    /* Success messages */
-    .element-container .stSuccess {
-        background: linear-gradient(135deg, #C8E6C9 0%, #A5D6A7 100%);
-        border-radius: 10px;
-        border-left: 5px solid #4CAF50;
-    }
+
+    /* Compact metrics */
+    [data-testid="stMetricValue"] { font-size: 1.5rem; font-weight: 600; }
+
+    /* Remove sidebar shadow */
+    [data-testid="stSidebar"] { background: #fafafa; }
 </style>
 """, unsafe_allow_html=True)
 
-# En-tête moderne
+# ── Header ──
 st.markdown("""
-<div class="main-header">
-    <h1>🏢 Recherche d'Entreprises Françaises</h1>
-    <p>Explorez les données officielles des entreprises françaises en quelques clics</p>
+<div class="app-header">
+    <h1>🏢 Recherche d'Entreprises</h1>
+    <p>Données officielles — API DINUM &amp; RNE / INPI</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Informations avec cards stylées
-st.markdown("""
-<div class="info-card">
-    <strong>💡 API Publique et Gratuite</strong><br>
-    Aucune authentification requise ! Cette application utilise l'API ouverte de l'État français pour vous fournir des données officielles et à jour.
-</div>
-""", unsafe_allow_html=True)
+# DB age warning
+if FINANCES_AVAILABLE and db_available():
+    age = db_age_days()
+    if age is not None and age > 90:
+        st.warning(f"⚠️ Base financière datée de {age} jours. Lancez `python update_rne_db.py` pour la mettre à jour.")
 
-st.markdown("""
-<div class="warning-card">
-    <strong>⚠️ Note sur les données financières</strong><br>
-    Seules 10-20% des entreprises publient leurs comptes (GE, ETI, sociétés cotées). 
-    Les PME de moins de 50 salariés ne sont pas obligées de publier. Il est normal que beaucoup de résultats affichent 'N/A'.
-</div>
-""", unsafe_allow_html=True)
-
-# Check if we can import requests
-try:
-    import requests
-    USE_API = True
-    API_BASE_URL = "https://recherche-entreprises.api.gouv.fr"
-    # Rate limiting: API limite ~250 req/min (4.17 req/sec)
-    # Avec marge de sécurité de 50%: 2 req/sec max
-    # Délai entre requêtes: 1/2 = 0.5 secondes
-    API_DELAY_SECONDS = 0.5  # Marge de sécurité importante pour éviter les 429
-    API_MAX_RETRIES = 3  # Nombre de tentatives en cas d'erreur 429
-except ImportError:
-    USE_API = False
-    API_DELAY_SECONDS = 0
-
-if not USE_API:
-    st.error("❌ Module 'requests' non installé. Veuillez installer les dépendances : pip install -r requirements.txt")
-    st.stop()
+# API configuration
+USE_API = True
+API_BASE_URL = "https://recherche-entreprises.api.gouv.fr"
+API_DELAY_SECONDS = 0.5
+API_MAX_RETRIES = 3
 
 
 def is_siret(value):
@@ -264,13 +165,12 @@ def search_company_api(query):
 
 
 def extract_financial_info(company_data, original_siret=None, rne_data=None):
-    """Extract comprehensive information from company data including financial, 
-    legal, geographic, and leadership data.
-    
+    """Extract comprehensive information from company data.
+
     Args:
         company_data: Données de l'API DINUM
         original_siret: SIRET original de la requête
-        rne_data: Données financières RNE (optionnel)
+        rne_data: Données financières SQLite/RNE (optionnel)
     """
     
     # Base structures
@@ -429,206 +329,67 @@ def _format_currency(value):
 
 
 def process_companies(queries):
-    """Process multiple company queries with optimized batch processing for large volumes.
-    
+    """Process multiple company queries.
+
     Args:
         queries: List of strings (company names) or tuples (name, siret/siren)
     """
     results = []
     total = len(queries)
-    
-    # Seuil pour activer le mode batch optimisé
-    BATCH_THRESHOLD = 50
-    use_batch_mode = (total >= BATCH_THRESHOLD and 
-                      'use_rne' in st.session_state and 
-                      st.session_state.use_rne and 
-                      RNE_AVAILABLE)
-    
-    # MODE BATCH OPTIMISÉ pour gros volumes avec RNE
-    if use_batch_mode:
-        st.info(f"🚀 **Mode d'optimisation activé** pour {total} entreprises")
-        st.markdown("""
-        **Traitement par lots optimisé :**
-        - 📊 Phase 1: Récupération des SIRENs via API DINUM
-        - 📦 Phase 2: Tri et regroupement par fichier RNE
-        - ⚡ Phase 3: Téléchargement parallèle (3 fichiers max simultanés)
-        - 🗑️ Nettoyage automatique après chaque lot
-        """)
-        
-        # Phase 1: Récupération des SIRENs
-        st.markdown("### 📊 Phase 1: Identification des entreprises")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        company_mapping = {}  # {siren: (company_data, original_query)}
-        queries_without_siren = []  # Entreprises non trouvées
-        
-        for idx, query_data in enumerate(queries, 1):
-            if isinstance(query_data, tuple):
-                name, siret_siren = query_data
-                query = siret_siren.strip() if siret_siren and str(siret_siren).strip() and str(siret_siren).strip() != 'nan' else name.strip()
-                display_name = name if name and str(name).strip() and str(name).strip() != 'nan' else query
-            else:
-                query = query_data.strip()
-                display_name = query
-            
-            if not query:
-                continue
-            
-            status_text.text(f"Recherche {idx}/{total}: {display_name[:50]}...")
+
+    if USE_API and total > 1:
+        estimated_time = total * API_DELAY_SECONDS
+        if estimated_time > 5:
+            st.info(f"⏱️ {total} entreprise(s) — ~{int(estimated_time)}s")
+
+    progress_bar = st.progress(0) if total > 1 else None
+
+    for idx, query_data in enumerate(queries, 1):
+        if isinstance(query_data, tuple):
+            name, siret_siren = query_data
+            query = (
+                siret_siren.strip()
+                if siret_siren
+                and str(siret_siren).strip()
+                and str(siret_siren).strip() != "nan"
+                else name.strip()
+            )
+            display_name = (
+                name
+                if name and str(name).strip() and str(name).strip() != "nan"
+                else query
+            )
+        else:
+            query = query_data.strip()
+            display_name = query
+
+        if not query:
+            continue
+
+        if progress_bar:
             progress_bar.progress(idx / total)
-            
+
+        with st.spinner(f"Recherche {idx}/{total}: {display_name[:40]}..."):
             original_siret = query if is_siret(query) else None
             company_data = search_company_api(query)
-            
-            if company_data and company_data.get("siren"):
-                siren = company_data["siren"]
-                company_mapping[siren] = (company_data, original_siret, display_name)
-            else:
-                queries_without_siren.append((query, display_name, original_siret))
-        
-        status_text.text(f"✅ Phase 1 terminée: {len(company_mapping)} entreprises identifiées")
-        
-        # Phase 2 & 3: Enrichissement RNE par lots
-        if company_mapping:
-            st.markdown("### 📦 Phase 2-3: Enrichissement RNE par lots")
-            
-            sirens_list = list(company_mapping.keys())
-            
-            # Callback pour afficher la progression
-            batch_progress = st.progress(0)
-            batch_status = st.empty()
-            
-            def progress_callback(completed, total_files, current_file):
-                batch_progress.progress(completed / total_files)
-                batch_status.text(f"📦 Fichiers traités: {completed}/{total_files} - Actuel: {current_file}")
-            
-            # Traitement par lots parallèle
-            rne_results = enrich_batch_parallel(
-                sirens_list, 
-                max_bilans=10, 
-                max_workers=3,
-                progress_callback=progress_callback
-            )
-            
-            batch_status.text(f"✅ Enrichissement RNE terminé: {len([r for r in rne_results.values() if r.get('success')])} réussis")
-            
-            # Fusion des données
-            for siren, (company_data, original_siret, display_name) in company_mapping.items():
-                rne_data = rne_results.get(siren)
+            rne_data = None
+
+            # Enrich with SQLite finances if available
+            if company_data and FINANCES_AVAILABLE:
+                siren = company_data.get("siren")
+                if siren:
+                    rne_data = get_finances(siren)
+
+            if company_data:
                 info = extract_financial_info(company_data, original_siret, rne_data)
                 results.append(info)
-        
-        # Ajouter les entreprises non trouvées
-        for query, display_name, original_siret in queries_without_siren:
-            results.append({
-                "SIRET": original_siret or "N/A",
-                "SIREN": extract_siren_from_siret(query) if is_siret(query) else "N/A",
-                "Vérification SIREN": "❌ Non trouvé",
-                "Nom": f"Non trouvé ({query})",
-                "État administratif": "N/A",
-                "Catégorie": "N/A",
-                "Nature juridique": "N/A",
-                "Activité principale": "N/A",
-                "Effectif salarié": "N/A",
-                "Nombre d'établissements": "N/A",
-                "Date de création": "N/A",
-                "Chiffre d'affaires (CA)": "N/A",
-                "Résultat net": "N/A",
-                "Date clôture exercice": "N/A",
-                "Adresse siège": "N/A",
-            })
-        
-        st.success(f"✅ **Traitement terminé** : {len(results)} entreprises traitées")
-        
-    # MODE STANDARD pour petits volumes
-    else:
-        # Estimation du temps si on utilise l'API
-        if USE_API and total > 1:
-            estimated_time = total * API_DELAY_SECONDS
-            if estimated_time > 5:
-                st.info(f"⏱️ Traitement de {total} entreprise(s). "
-                       f"Temps estimé : ~{int(estimated_time)} secondes "
-                       f"(rate limiting API respecté)")
-
-        for idx, query_data in enumerate(queries, 1):
-            # query_data peut être un string ou un tuple (nom, siret/siren)
-            if isinstance(query_data, tuple):
-                name, siret_siren = query_data
-                # Utiliser le SIRET/SIREN en priorité s'il existe
-                query = siret_siren.strip() if siret_siren and str(siret_siren).strip() and str(siret_siren).strip() != 'nan' else name.strip()
-                display_name = name if name and str(name).strip() and str(name).strip() != 'nan' else query
             else:
-                query = query_data.strip()
-                display_name = query
-                
-            if not query:
-                continue
-
-            # Progress indicator pour les gros fichiers
-            if total > 5:
-                progress_text = f"({idx}/{total})"
-            else:
-                progress_text = ""
-                
-            with st.spinner(f"Recherche {progress_text} '{display_name}'..."):
-                company_data = None
-                original_siret = query if is_siret(query) else None
-                rne_data = None
-                
-                # Vérifier le mode d'enrichissement
-                use_rne = 'use_rne' in st.session_state and st.session_state.use_rne
-                enrichment_mode = st.session_state.get('enrichment_mode', 'Pappers + RNE')
-                
-                # MODE RNE SEUL : Utiliser uniquement RNE (sans Pappers)
-                if use_rne and enrichment_mode == "RNE seul" and RNE_AVAILABLE:
-                    # Extraire SIREN du SIRET ou utiliser directement le SIREN
-                    siren = extract_siren_from_siret(query) if is_siret(query) else query
-                    
-                    try:
-                        with st.spinner(f"🏛️ Enrichissement RNE seul pour {siren}..."):
-                            rne_data = enrich_from_rne_only(siren, max_bilans=10)
-                            
-                            if rne_data.get("success"):
-                                # Créer company_data depuis RNE pour compatibilité avec extract_financial_info
-                                company_data = {
-                                    "siren": rne_data.get("siren"),
-                                    "nom_complet": rne_data.get("denomination"),
-                                    "siege": {
-                                        "siret": rne_data.get("siret") or original_siret
-                                    }
-                                }
-                            else:
-                                st.warning(f"⚠️ Aucune donnée RNE pour {siren}: {rne_data.get('error', 'Erreur inconnue')}")
-                    except Exception as e:
-                        st.error(f"❌ Erreur enrichissement RNE pour {siren}: {str(e)}")
-                
-                # MODE PAPPERS + RNE (classique)
-                else:
-                    # Recherche via l'API publique (Pappers/DINUM)
-                    company_data = search_company_api(query)
-
-                    if company_data:
-                        # Enrichissement RNE si activé
-                        if use_rne:
-                            siren = company_data.get("siren")
-                            if siren and RNE_AVAILABLE:
-                                try:
-                                    with st.spinner(f"🏛️ Enrichissement RNE pour {siren}..."):
-                                        rne_data = enrich_from_api_dinum_and_rne(siren, max_bilans=10)
-                                except Exception as e:
-                                    st.warning(f"⚠️ Erreur enrichissement RNE pour {siren}: {str(e)}")
-                
-                # Traiter les résultats
-                if company_data:
-                    info = extract_financial_info(company_data, original_siret, rne_data)
-                    results.append(info)
-                else:
-                    # Record as not found with the original query
-                    results.append({
+                results.append(
+                    {
                         "SIRET": original_siret or "N/A",
                         "SIREN": extract_siren_from_siret(query)
-                                if is_siret(query) else "N/A",
+                        if is_siret(query)
+                        else "N/A",
                         "Vérification SIREN": "❌ Non trouvé",
                         "Nom": f"Non trouvé ({query})",
                         "État administratif": "N/A",
@@ -642,9 +403,8 @@ def process_companies(queries):
                         "Résultat net": "N/A",
                         "Date clôture exercice": "N/A",
                         "Adresse siège": "N/A",
-                    })
-                    mode_msg = "RNE" if (use_rne and enrichment_mode == "RNE seul") else "API"
-                    st.warning(f"⚠️ Entreprise '{query}' non trouvée ({mode_msg})")
+                    }
+                )
 
     return results
 
@@ -761,392 +521,94 @@ def create_download_button(df, file_format, key_suffix=""):
 
 
 def display_results(results, section_key=""):
-    """Display results in a table with download options."""
-    if results:
-        df = pd.DataFrame(results)
-        
-        # Convert all columns to string to avoid Arrow serialization issues
-        for col in df.columns:
-            df[col] = df[col].astype(str)
+    """Display results in a clean, minimal layout."""
+    if not results:
+        st.info("Aucun résultat.")
+        return
 
-        # Summary avec métriques visuelles
-        verified = sum(1 for r in results
-                       if r.get("Vérification SIREN") == "✅ Vérifié")
-        not_found = len(results) - verified
-        with_finances = sum(1 for r in results
-                           if r.get("Données financières publiées") == "Oui")
-        
-        # En-tête avec métriques
-        st.markdown("---")
-        st.markdown("### 📊 Résultats de la Recherche")
-        
-        # Métriques en colonnes
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric(
-                label="🏢 Total",
-                value=len(results),
-                delta="entreprises"
-            )
-        
-        with col2:
-            st.metric(
-                label="✅ Vérifiées",
-                value=verified,
-                delta=f"{(verified/len(results)*100):.0f}%" if results else "0%"
-            )
-        
-        with col3:
-            st.metric(
-                label="💰 Avec finances",
-                value=with_finances,
-                delta=f"{(with_finances/len(results)*100):.0f}%" if results else "0%"
-            )
-        
-        with col4:
-            st.metric(
-                label="❌ Non trouvées",
-                value=not_found,
-                delta=f"{(not_found/len(results)*100):.0f}%" if results else "0%",
-                delta_color="inverse"
-            )
-        
-        st.markdown("---")
-        
-        # Affichage avec tabs pour différentes vues
-        tab_table, tab_cards = st.tabs(["📋 Vue Tableau", "🎴 Vue Cartes"])
-        
-        with tab_table:
-            st.markdown("*Données complètes : identification, finances, géographie, dirigeants et certifications*")
-            st.dataframe(df, use_container_width=True, height=500)
-        
-        with tab_cards:
-            # Vue en cartes pour les premières entreprises
-            st.markdown("*Vue détaillée des premières entreprises*")
-            for idx, result in enumerate(results[:5]):  # Limiter à 5 pour la vue carte
-                with st.expander(f"🏢 {result.get('Nom', 'N/A')}", expanded=(idx==0)):
-                    col_a, col_b = st.columns(2)
-                    
-                    with col_a:
-                        st.markdown("**🔍 Identification**")
-                        st.markdown(f"- **SIREN:** {result.get('SIREN', 'N/A')}")
-                        st.markdown(f"- **SIRET:** {result.get('SIRET', 'N/A')}")
-                        st.markdown(f"- **Statut:** {result.get('Vérification SIREN', 'N/A')}")
-                        st.markdown(f"- **État:** {result.get('État administratif', 'N/A')}")
-                        
-                        st.markdown("**💰 Finances**")
-                        ca_value = result.get("Chiffre d'affaires (CA)", 'N/A')
-                        st.markdown(f"- **CA:** {ca_value}")
-                        st.markdown(f"- **Résultat:** {result.get('Résultat net', 'N/A')}")
-                        st.markdown(f"- **Année:** {result.get('Année finances', 'N/A')}")
-                    
-                    with col_b:
-                        st.markdown("**📍 Localisation**")
-                        st.markdown(f"- **Adresse:** {result.get('Adresse siège', 'N/A')}")
-                        st.markdown(f"- **Ville:** {result.get('Commune', 'N/A')}")
-                        st.markdown(f"- **Région:** {result.get('Région', 'N/A')}")
-                        
-                        st.markdown("**👥 Organisation**")
-                        st.markdown(f"- **Effectif:** {result.get('Effectif salarié', 'N/A')}")
-                        st.markdown(f"- **Catégorie:** {result.get('Catégorie', 'N/A')}")
-                        nb_etab = result.get("Nombre d'établissements", 'N/A')
-                        st.markdown(f"- **Établissements:** {nb_etab}")
-            
-            if len(results) > 5:
-                st.info(f"💡 {len(results) - 5} autres entreprises disponibles dans la vue tableau")
+    df = pd.DataFrame(results)
+    for col in df.columns:
+        df[col] = df[col].astype(str)
 
-        # Export options avec style amélioré
-        st.markdown("---")
-        st.markdown("### 📥 Télécharger les Résultats")
-        col1, col2, col3 = st.columns([1, 1, 2])
-        with col1:
-            create_download_button(df, "CSV", section_key)
-        with col2:
-            create_download_button(df, "XLSX", section_key)
-        with col3:
-            st.markdown("*Exportez toutes les données en CSV ou Excel*")
+    verified = sum(1 for r in results if r.get("Vérification SIREN") == "✅ Vérifié")
+    not_found = len(results) - verified
+    with_finances = sum(1 for r in results if r.get("Données financières publiées") == "Oui")
 
-        st.success(f"✅ Traitement terminé : {len(results)} entreprise(s) analysée(s)")
-    else:
-        st.warning("⚠️ Aucun résultat trouvé")
+    # Compact summary row
+    st.markdown("---")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Trouvées", verified)
+    c2.metric("Avec finances", with_finances)
+    c3.metric("Non trouvées", not_found)
+
+    # Data table
+    st.dataframe(df, use_container_width=True, height=min(400, 60 + len(results) * 35))
+
+    # Download row
+    col_a, col_b = st.columns(2)
+    with col_a:
+        create_download_button(df, "CSV", section_key)
+    with col_b:
+        create_download_button(df, "XLSX", section_key)
 
 
-# ──────────────────────────────────────────────────────
-# Main UI — Tabs
-# ──────────────────────────────────────────────────────
 
-tab_file, tab_manual = st.tabs([
-    "📁 Import fichier",
-    "✏️ Recherche par nom",
-])
+# ── Main UI ──────────────────────────────────────────
 
-# ── Tab 1: File upload ────────────────────────────────
+tab_file, tab_manual = st.tabs(["📁 Import fichier", "✏️ Saisie manuelle"])
+
 with tab_file:
-    st.markdown("### Importer un fichier d'entreprises")
-    st.markdown(
-        "Importez un fichier **CSV** ou **Excel** :\n\n"
-        "**Format recommandé (2 colonnes) :**\n"
-        "- Colonne A : Nom entreprise\n"
-        "- Colonne B : SIRET ou SIREN (optionnel)\n\n"
-        "**Format simple (1 colonne) :**\n"
-        "- Noms d'entreprises OU SIRET/SIREN"
-    )
+    st.markdown("#### Importer un fichier")
+    st.caption("CSV ou Excel — colonnes détectées automatiquement (nom, SIRET, SIREN)")
 
     uploaded_file = st.file_uploader(
-        "Choisir un fichier CSV ou Excel",
+        "Fichier CSV / Excel",
         type=["csv", "xlsx", "xls"],
-        help="Le fichier peut contenir des noms d'entreprises, SIRET, ou SIREN. "
-             "L'app détectera automatiquement le type de données.",
     )
 
     if uploaded_file is not None:
         siret_list = read_uploaded_file(uploaded_file)
-
         if siret_list:
-            st.info(f"📋 {len(siret_list)} entrée(s) trouvée(s) "
-                    "dans le fichier.")
-
-            # Show preview
-            with st.expander("Aperçu des données importées"):
-                preview_data = []
-                for item in siret_list[:10]:
-                    if isinstance(item, tuple):
-                        name, id_val = item
-                        type_val = "SIRET" if is_siret(id_val) else ("SIREN" if is_siren(id_val) else "—")
-                        preview_data.append({
-                            "Nom entreprise": name if name and name != 'nan' else "—",
-                            "SIRET/SIREN": id_val if id_val and id_val != 'nan' else "—",
-                            "Type ID": type_val,
-                        })
-                    else:
-                        s = item
-                        type_val = "SIRET" if is_siret(s) else ("SIREN" if is_siren(s) else "Nom")
-                        preview_data.append({
-                            "Valeur importée": s,
-                            "Type": type_val,
-                        })
-                st.dataframe(pd.DataFrame(preview_data),
-                             use_container_width=True)
-                if len(siret_list) > 10:
-                    st.caption(f"… et {len(siret_list) - 10} autre(s)")
-
-            if st.button("🔍 Rechercher et enrichir les données",
-                         type="primary", key="btn_file"):
-                with st.spinner("Traitement en cours..."):
-                    results = process_companies(siret_list)
+            st.info(f"{len(siret_list)} entrée(s) détectée(s)")
+            if st.button("🔍 Lancer la recherche", type="primary", key="btn_file"):
+                results = process_companies(siret_list)
                 display_results(results, section_key="file")
 
-# ── Tab 2: Manual input ──────────────────────────────
 with tab_manual:
-    st.markdown("### Recherche d'Entreprises par Nom")
-    st.markdown("**Entrez les noms d'entreprises** (un par ligne). "
-                "Vous pouvez aussi ajouter SIREN ou SIRET pour plus de précision.")
+    st.markdown("#### Recherche manuelle")
+    st.caption("Un nom, SIREN ou SIRET par ligne")
 
     user_input = st.text_area(
-        "Noms d'entreprises (ou SIRET/SIREN)",
-        height=150,
-        placeholder="Exemple:\nAirbus\nTotal Energies\nOrange\nRenault\n\n"
-                    "Ou avec SIRET/SIREN:\n383474814\n38347481400019",
+        "Entreprises",
+        height=120,
+        placeholder="Airbus\nTotal Energies\n383474814",
     )
 
     if st.button("🔍 Rechercher", type="primary", key="btn_manual"):
         if user_input:
-            queries = [line.strip() for line in user_input.split('\n')
-                       if line.strip()]
+            queries = [l.strip() for l in user_input.split("\n") if l.strip()]
             if queries:
-                with st.spinner("Traitement en cours..."):
-                    results = process_companies(queries)
+                results = process_companies(queries)
                 display_results(results, section_key="manual")
             else:
-                st.warning("⚠️ Veuillez entrer au moins un nom, "
-                           "SIREN ou SIRET")
+                st.warning("Entrez au moins une entreprise.")
         else:
-            st.warning("⚠️ Veuillez entrer des noms d'entreprises, "
-                       "SIREN ou SIRET")
+            st.warning("Entrez au moins une entreprise.")
 
-# ──────────────────────────────────────────────────────
-# Sidebar
-# ──────────────────────────────────────────────────────
+# ── Sidebar (minimal) ──
 
 with st.sidebar:
-    st.markdown("## 📚 Guide d'Utilisation")
-    
-    # Instructions avec expanders pour une meilleure organisation
-    with st.expander("🔍 **Recherche par Nom**", expanded=True):
-        st.markdown("""
-        **Simple et rapide :**
-        1. Entrez les noms d'entreprises
-        2. L'API trouve automatiquement les données
-        3. Aucune clé API nécessaire !
-        
-        💡 *Méthode recommandée*
-        """)
-    
-    with st.expander("📁 **Import de Fichier**"):
-        st.markdown("""
-        **Format optimal (2 colonnes) :**
-        - Colonne A : Nom entreprise
-        - Colonne B : SIRET/SIREN (optionnel)
-        
-        **Format simple (1 colonne) :**
-        - Noms d'entreprises OU SIRET/SIREN
-        
-        📊 Formats : CSV, Excel (.xlsx, .xls)
-        """)
-    
-    with st.expander("📊 **Données Enrichies**"):
-        st.markdown("""
-        **🔍 Identification**
-        - SIRET, SIREN, Nom, Sigle
-        
-        **🏢 Structure**
-        - État, Catégorie, Nature juridique
-        - Date de création, Activité (NAF)
-        
-        **💰 Finances** *(10-20% publient)*
-        - Chiffre d'affaires
-        - Résultat net
-        
-        **📍 Localisation**
-        - Adresse complète
-        - Coordonnées GPS
-        
-        **👥 Organisation**
-        - Effectifs, Dirigeants
-        - Nombre d'établissements
-        
-        **🏆 Certifications**
-        - Qualiopi, RGE, Bio, ESS
-        - Société à mission
-        """)
-    
-    st.markdown("---")
-    
-    # Informations techniques avec style
-    st.markdown("### ⚙️ Configuration")
-    st.success("🌐 **API Publique Active**")
-    st.caption("recherche-entreprises.api.gouv.fr")
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.metric("⏱️ Délai", f"{API_DELAY_SECONDS}s")
-    with col_b:
-        st.metric("🔄 Tentatives", API_MAX_RETRIES)
-    
-    st.markdown("---")
-    
-    # Option d'enrichissement RNE
-    st.markdown("### 🏛️ Enrichissement RNE")
-    
-    if RNE_AVAILABLE:
-        use_rne = st.checkbox(
-            "📊 Activer enrichissement FTP/RNE",
-            value=False,
-            help="Récupère les données financières sur plusieurs années depuis le serveur FTP RNE (INPI)",
-            key="use_rne"  # Stocké dans session_state
-        )
-        
-        if use_rne:
-            # Mode d'enrichissement : Pappers + RNE ou RNE seul
-            enrichment_mode = st.radio(
-                "Mode d'enrichissement",
-                options=["Pappers + RNE", "RNE seul"],
-                help="""
-                **Pappers + RNE** : Recherche avec Pappers puis enrichit avec RNE (recommandé)
-                **RNE seul** : Utilise uniquement RNE (plus rapide si vous avez déjà des SIRETs validés)
-                """,
-                key="enrichment_mode"
-            )
-            
-            # Vérifier si des fichiers sont en cache
-            import os
-            cache_dir = Path("/workspaces/TestsMCP/rne_cache")
-            cached_files = len(list(cache_dir.glob("*.json"))) if cache_dir.exists() else 0
-            
-            if cached_files > 0:
-                st.success(f"""
-                ✅ **Cache RNE disponible**
-                
-                📦 {cached_files} fichier(s) en cache
-                ⚡ Accès rapide sans téléchargement
-                """)
-            else:
-                st.warning("""
-                ⚠️ **Aucun fichier en cache**
-                
-                Le premier accès téléchargera 3.5 GB depuis le FTP.
-                Cela peut prendre **30-60 secondes par fichier** et causer des erreurs 502.
-                """)
-                
-                st.info("""
-                💡 **Recommandation pour usage intensif**
-                
-                Pour éviter les timeouts, extrayez les fichiers localement :
-                
-                ```bash
-                # 1. Télécharger le ZIP (une seule fois)
-                wget ftp://rneinpiro:vv8_rQ5f4M_2-E@www.inpi.net/stock_RNE_comptes_annuels_20250926_1000_v2.zip
-                
-                # 2. Extraire pour vos SIRENs
-                python3 extract_rne_files.py --sirens [vos_sirens]
-                
-                # Ou extraire tout (1380 fichiers, ~2-3 GB)
-                python3 extract_rne_files.py --all
-                ```
-                
-                Une fois extrait, le cache sera utilisé (rapide).
-                """)
-            
-            st.info("""
-            **🚀 Mode optimisé pour gros volumes**
-            
-            À partir de 50 entreprises :
-            - 📦 Tri par fichiers RNE
-            - ⚡ Traitement parallèle (3 fichiers max)
-            - 🗑️ Nettoyage automatique
-            - 💾 Économie d'espace disque
-            """)
-        else:
-            st.info("""
-            💡 **Enrichissement RNE disponible**
-            
-            Activez pour obtenir l'historique complet des finances.
-            """)
+    st.markdown("### ℹ️ À propos")
+    st.caption("Données officielles via l'API de l'État français.")
+
+    if FINANCES_AVAILABLE and db_available():
+        st.success("✅ Base financière SQLite disponible")
+        age = db_age_days()
+        if age is not None:
+            st.caption(f"Dernière mise à jour : il y a {age} jour(s)")
     else:
-        st.warning("""
-        ⚠️ **Module RNE non disponible**
-        
-        Pour l'activer, vérifiez enrichment_hybrid.py
-        """)
-        if "use_rne" not in st.session_state:
-            st.session_state.use_rne = False
-    
+        st.info("💡 Pas de base financière locale. Seules les données DINUM sont utilisées.")
+
     st.markdown("---")
-    
-    # Note importante sur les finances
-    st.markdown("### ⚠️ Note Importante")
-    st.warning("""
-    **Données financières limitées**
-    
-    Seules 10-20% des entreprises publient leurs comptes :
-    - Grandes Entreprises (GE)
-    - ETI (Entreprises de Taille Intermédiaire)
-    - Sociétés cotées
-    
-    Les PME < 50 salariés ne sont **pas obligées** de publier.
-    """)
-    
-    st.markdown("---")
-    
-    # Source et crédits
-    st.markdown("### 🔗 Sources")
-    st.markdown("""
-    **Données officielles**
-    
-    📊 [API Recherche d'Entreprises](https://recherche-entreprises.api.gouv.fr/)
-    
-    🤝 Inspiré par [datagouv-mcp](https://github.com/datagouv/datagouv-mcp)
-    
-    🇫🇷 [data.gouv.fr](https://www.data.gouv.fr)
-    """)
+    st.caption("⚠️ Seules 10-20 % des entreprises publient leurs comptes.")
+    st.markdown("[API Recherche Entreprises](https://recherche-entreprises.api.gouv.fr/)")
