@@ -87,47 +87,72 @@ class TestSiretSirenValidation:
         assert app.extract_siren_from_siret("383474814") == "383474814"
 
 
-class TestDemoDataLookup:
-    """Tests for demo data lookup by SIRET, SIREN, and name."""
-
-    def test_search_by_siren(self):
-        result = app.search_company_demo("383474814")
-        assert result is not None
-        assert result["nom_complet"] == "AIRBUS"
-
-    def test_search_by_siret(self):
-        result = app.search_company_demo("38347481400019")
-        assert result is not None
-        assert result["nom_complet"] == "AIRBUS"
-
-    def test_search_by_name(self):
-        result = app.search_company_demo("airbus")
-        assert result is not None
-        assert result["siren"] == "383474814"
-
-    def test_search_not_found(self):
-        result = app.search_company_demo("99999999999999")
-        assert result is None
-
-
 class TestExtractFinancialInfo:
     """Tests for financial info extraction."""
 
-    def test_extract_from_demo_data(self):
-        company = app.DEMO_COMPANIES["383474814"]
+    def _make_company(self, siren="383474814", nom="AIRBUS", ca=49524000000,
+                      resultat_net=3501000000, date_cloture="2023-12-31"):
+        """Helper to build a company data dict similar to the DINUM API."""
+        return {
+            "siren": siren,
+            "nom_complet": nom,
+            "etat_administratif": "A",
+            "date_creation": "1970-12-29",
+            "categorie_entreprise": "GE",
+            "nature_juridique": "5710",
+            "siege": {
+                "siret": f"{siren}00019",
+                "activite_principale": "30.30Z",
+                "geo_adresse": "1 Rond Point Maurice Bellonte, 31707 Blagnac",
+                "code_postal": "31707",
+                "libelle_commune": "BLAGNAC",
+                "departement": "31",
+                "region": "Occitanie",
+                "latitude": "43.6347",
+                "longitude": "1.3727",
+            },
+            "tranche_effectif_salarie": "53",
+            "nombre_etablissements": 30,
+            "nombre_etablissements_ouverts": 25,
+            "complements": {},
+            "dirigeants": [],
+            "finances": {
+                str(date_cloture[:4]): {
+                    "ca": ca,
+                    "resultat_net": resultat_net,
+                }
+            },
+        }
+
+    def test_extract_from_company_data(self):
+        company = self._make_company()
         info = app.extract_financial_info(company)
         assert info["SIREN"] == "383474814"
         assert info["Vérification SIREN"] == "✅ Vérifié"
         assert info["Nom"] == "AIRBUS"
         assert "49,524,000,000" in info["Chiffre d'affaires (CA)"]
         assert "3,501,000,000" in info["Résultat net"]
-        assert info["Date clôture exercice"] == "2023-12-31"
 
     def test_extract_with_original_siret(self):
-        company = app.DEMO_COMPANIES["383474814"]
-        info = app.extract_financial_info(company,
-                                          original_siret="38347481400019")
+        company = self._make_company()
+        info = app.extract_financial_info(company, original_siret="38347481400019")
         assert info["SIRET"] == "38347481400019"
+
+    def test_extract_with_rne_data(self):
+        company = self._make_company()
+        rne_data = {
+            "success": True,
+            "bilans": [
+                {
+                    "date_cloture": "2023-12-31",
+                    "chiffre_affaires": 50000000000,
+                    "resultat_net": 4000000000,
+                }
+            ],
+        }
+        info = app.extract_financial_info(company, rne_data=rne_data)
+        assert info["Données financières publiées"] == "Oui"
+        assert "RNE" in info["Source finances"]
 
     def test_format_etat_active(self):
         assert app._format_etat("A") == "Active"
@@ -150,7 +175,6 @@ class TestReadUploadedFile:
         fake_file.read = MagicMock(return_value=csv_content.encode('utf-8'))
         fake_file.seek = MagicMock()
 
-        # Simulate pd.read_csv from a file-like object
         with patch('pandas.read_csv') as mock_csv:
             mock_csv.return_value = pd.DataFrame({
                 'siret': ['38347481400019', '54205118000066'],
@@ -158,8 +182,9 @@ class TestReadUploadedFile:
             })
             result = app.read_uploaded_file(fake_file)
             assert len(result) == 2
-            assert result[0] == '38347481400019'
-            assert result[1] == '54205118000066'
+            # read_uploaded_file now returns tuples (name, id) when both columns exist
+            assert result[0] == ('Airbus', '38347481400019')
+            assert result[1] == ('Total', '54205118000066')
 
     def test_read_csv_first_column_fallback(self):
         with patch('pandas.read_csv') as mock_csv:
