@@ -149,16 +149,16 @@ def extract_bilans_from_json(data: Any) -> List[Tuple]:
         for page in pages:
             if not isinstance(page, dict):
                 continue
-            lignes = page.get("lignes", [])
-            if not isinstance(lignes, list):
+            liasses = page.get("lignes", [])
+            if not isinstance(liasses, list):
                 continue
-            for ligne in lignes:
-                if not isinstance(ligne, dict):
+            for liasse in liasses:
+                if not isinstance(liasse, dict):
                     continue
-                code = ligne.get("code", "")
+                code = liasse.get("code", "")
                 if code in LIASSE_CODES:
-                    m1 = _parse_amount(ligne.get("m1"))
-                    m2 = _parse_amount(ligne.get("m2"))
+                    m1 = _parse_amount(liasse.get("m1"))
+                    m2 = _parse_amount(liasse.get("m2"))
                     col_n, col_n1 = LIASSE_MAP[code]
                     metrics[col_n] = m1
                     metrics_prev[col_n1] = m2

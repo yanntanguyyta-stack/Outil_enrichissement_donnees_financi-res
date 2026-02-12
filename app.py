@@ -71,7 +71,7 @@ st.markdown("""
 # DB age warning
 if FINANCES_AVAILABLE and db_available():
     age = db_age_days()
-    if age is not None and age > 90:
+    if age is not None and age > DB_AGE_WARNING_DAYS:
         st.warning(f"⚠️ Base financière datée de {age} jours. Lancez `python update_rne_db.py` pour la mettre à jour.")
 
 # API configuration
@@ -79,6 +79,7 @@ USE_API = True
 API_BASE_URL = "https://recherche-entreprises.api.gouv.fr"
 API_DELAY_SECONDS = 0.5
 API_MAX_RETRIES = 3
+DB_AGE_WARNING_DAYS = 90
 
 
 def is_siret(value):

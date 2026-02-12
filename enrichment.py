@@ -58,7 +58,9 @@ def db_age_days() -> Optional[int]:
         return None
     import datetime
     mtime = path.stat().st_mtime
-    age = datetime.datetime.now() - datetime.datetime.fromtimestamp(mtime)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    modified = datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc)
+    age = now - modified
     return age.days
 
 

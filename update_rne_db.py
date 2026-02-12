@@ -53,7 +53,7 @@ def update_db(db_path: str) -> bool:
     try:
         total = build_from_ftp(db_path)
     except Exception as exc:
-        logger.error("Build failed: %s", exc)
+        logger.error("Build failed for %s: %s", db_path, exc)
         total = 0
 
     if total > 0:
