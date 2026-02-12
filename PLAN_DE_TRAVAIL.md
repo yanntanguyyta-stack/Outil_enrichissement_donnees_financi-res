@@ -2,7 +2,7 @@
 
 ## Objectif
 
-Remplacer l'architecture actuelle (cache JSON 15 GB + FTP à la demande) par une solution fiable, compacte et performante basée sur une base SQLite locale contenant **uniquement les données financières indispensables** (6 métriques × 5 ans par SIRET).
+Remplacer l'architecture actuelle (cache JSON 15 GB + FTP à la demande) par une solution fiable, compacte et performante basée sur une base SQLite locale contenant **uniquement les données financières indispensables** (6 métriques × 7 ans par SIREN, depuis 2019).
 
 ---
 
@@ -60,22 +60,118 @@ Remplacer l'architecture actuelle (cache JSON 15 GB + FTP à la demande) par une
 | Modules enrichissement | 5 | 1 | **-80%** |
 | Dépendance FTP | À chaque requête | Trimestrielle | **Minime** |
 
+### Données conservées — Ce qu'on extrait du ZIP RNE (et rien d'autre)
+
+Le ZIP RNE de l'INPI contient **~1 380 fichiers JSON** pesant au total **~24 GB**. Chaque fichier contient des milliers de bilans avec des dizaines de champs (dénomination, adresse, forme juridique, historique de modifications, détails techniques, etc.) dont **nous n'avons pas besoin**.
+
+On extrait **uniquement** les données nécessaires à l'enrichissement financier :
+
+#### Données d'identification (par bilan)
+
+| Champ | Source RNE | Description | Exemple |
+|-------|-----------|-------------|---------|
+| **SIREN** | `siren` | Identifiant unique de l'entreprise (9 chiffres) | `005880596` |
+| **Date de clôture** | `dateCloture` | Fin de l'exercice comptable | `2023-12-31` |
+| **Date de dépôt** | `dateDepot` | Date de dépôt des comptes à l'INPI | `2024-07-15` |
+| **Type de bilan** | `typeBilan` | C = complet, S = simplifié, K = consolidé | `C` |
+
+#### Données financières — 6 indicateurs clés (exercice N et N-1)
+
+| Code liasse | Indicateur | Colonne m1 (année N) | Colonne m2 (année N-1) | Unité |
+|-------------|-----------|---------------------|----------------------|-------|
+| **FA** | Chiffre d'affaires | `chiffre_affaires` | `ca_precedent` | € |
+| **HN** | Résultat net | `resultat_net` | `rn_precedent` | € |
+| **GC** | Résultat d'exploitation | `resultat_exploitation` | `re_precedent` | € |
+| **BJ** | Total actif (bilan) | `total_actif` | `ta_precedent` | € |
+| **DL** | Capitaux propres | `capitaux_propres` | `cp_precedent` | € |
+| **HY** | Effectif moyen | `effectif` | `eff_precedent` | personnes |
+
+> **m1** = valeur de l'exercice courant (année N), **m2** = valeur de l'exercice précédent (année N-1).  
+> Chaque ligne de bilan fournit donc **2 années** de données.  
+> Avec ~7 bilans par entreprise (2019–2025), on couvre potentiellement **8 ans** de données grâce aux valeurs m2.
+
+#### Données exclues (non extraites)
+
+Tout le reste est **ignoré** pour économiser de l'espace :
+- Dénomination, adresse, forme juridique → déjà disponibles via l'API DINUM
+- Identifiant interne (`id`), `numChrono`, `confidentiality`
+- `updatedAt`, `deleted`, historique de modifications
+- Toutes les autres liasses comptables (~200 codes) non listées ci-dessus
+- Pages détaillées du bilan (`bilanSaisi.bilan.detail.pages[]`) → on n'extrait que les 6 codes
+
+#### Filtre temporel
+
+- **Seuls les bilans depuis 2019** sont conservés (date de clôture ≥ 2019-01-01)
+- Les bilans antérieurs à 2019 sont ignorés à l'import
+- Cela donne ~7 exercices par entreprise (2019, 2020, 2021, 2022, 2023, 2024, 2025)
+
+#### Volume estimé
+
+| Métrique | Estimation |
+|----------|-----------|
+| Entreprises avec comptes annuels | ~4 à 5 millions |
+| Bilans conservés (depuis 2019) | ~20 à 30 millions de lignes |
+| Colonnes par ligne | 16 (4 identif. + 6×2 indicateurs) |
+| Taille SQLite estimée | **250 à 450 MB** |
+| Taille source ignorée | ~23.5 GB (99% du ZIP) |
+
+#### Stratégie d'extraction — zéro problème de cache / disque
+
+Le problème actuel : chaque cache miss télécharge le **ZIP complet de 3.5 GB**, ce qui sature le disque et provoque des timeouts.
+
+La nouvelle approche élimine totalement ce problème :
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  FTP INPI (ZIP 3.5 GB)                                        │
+│       │                                                       │
+│       ▼  Streaming (fichier par fichier, jamais le ZIP entier) │
+│  ┌─────────────────────────────────────────────────────┐      │
+│  │  build_rne_db.py                                    │      │
+│  │                                                     │      │
+│  │  Pour chaque fichier JSON dans le ZIP :              │      │
+│  │   1. Lire le JSON EN MÉMOIRE (~80 MB)               │      │
+│  │   2. Extraire les 6 métriques des bilans ≥ 2019     │      │
+│  │   3. INSERT dans SQLite (batch de 10 000 lignes)    │      │
+│  │   4. Libérer la mémoire → fichier suivant           │      │
+│  │                                                     │      │
+│  │  ❌ Aucun fichier JSON sauvé sur disque              │      │
+│  │  ❌ Aucun cache intermédiaire                        │      │
+│  │  ✅ Seul le .db SQLite grossit (~250-450 MB final)   │      │
+│  └─────────────────────────────────────────────────────┘      │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**Occupation disque pendant la construction :**
+
+| Ressource | Taille | Durée de vie |
+|-----------|--------|-------------|
+| ZIP téléchargé depuis FTP | 3.5 GB | Le temps du build (supprimé après) |
+| JSON en mémoire (1 fichier) | ~80 MB | Quelques secondes par fichier |
+| Base SQLite en construction | 250-450 MB | Permanente |
+| **Total max pendant le build** | **~4 GB** | Temporaire |
+| **Total après le build** | **~250-450 MB** | Permanent |
+
+> **Pas de cache JSON, pas de répertoire `rne_cache/`, pas de téléchargement à la demande.**  
+> Après la construction, l'enrichissement est 100% offline depuis SQLite.
+
 ### Structure SQLite
 
 ```sql
 CREATE TABLE bilans (
     id INTEGER PRIMARY KEY,
-    siren TEXT NOT NULL,          -- 9 caractères
-    date_cloture TEXT NOT NULL,   -- YYYY-MM-DD
-    date_depot TEXT,
+    siren TEXT NOT NULL,          -- 9 caractères, ex: '005880596'
+    date_cloture TEXT NOT NULL,   -- YYYY-MM-DD, ex: '2023-12-31'
+    date_depot TEXT,              -- YYYY-MM-DD, ex: '2024-07-15'
     type_bilan TEXT,              -- C (complet), S (simplifié), K (consolidé)
-    chiffre_affaires INTEGER,     -- FA (m1)
-    resultat_net INTEGER,         -- HN (m1)
-    resultat_exploitation INTEGER,-- GC (m1)
-    total_actif INTEGER,          -- BJ (m1)
-    capitaux_propres INTEGER,     -- DL (m1)
-    effectif INTEGER,             -- HY (m1)
-    -- m2 = exercice précédent
+    -- Exercice N (m1) — 6 indicateurs
+    chiffre_affaires INTEGER,     -- FA (m1) en euros
+    resultat_net INTEGER,         -- HN (m1) en euros
+    resultat_exploitation INTEGER,-- GC (m1) en euros
+    total_actif INTEGER,          -- BJ (m1) en euros
+    capitaux_propres INTEGER,     -- DL (m1) en euros
+    effectif INTEGER,             -- HY (m1) en nombre de personnes
+    -- Exercice N-1 (m2) — mêmes 6 indicateurs
     ca_precedent INTEGER,         -- FA (m2)
     rn_precedent INTEGER,         -- HN (m2)
     re_precedent INTEGER,         -- GC (m2)
@@ -85,6 +181,22 @@ CREATE TABLE bilans (
 );
 CREATE INDEX idx_siren ON bilans(siren);
 CREATE INDEX idx_siren_date ON bilans(siren, date_cloture DESC);
+```
+
+#### Exemples de requêtes SQLite
+
+```sql
+-- Récupérer les 5 derniers exercices d'une entreprise
+SELECT * FROM bilans WHERE siren = '005880596' ORDER BY date_cloture DESC LIMIT 5;
+
+-- CA et résultat net des 3 dernières années
+SELECT date_cloture, chiffre_affaires, resultat_net
+FROM bilans WHERE siren = '552100554' ORDER BY date_cloture DESC LIMIT 3;
+
+-- Entreprises avec CA > 10M€ sur le dernier exercice
+SELECT siren, chiffre_affaires FROM bilans
+WHERE date_cloture >= '2023-01-01' AND chiffre_affaires > 10000000
+ORDER BY chiffre_affaires DESC;
 ```
 
 ---
@@ -98,13 +210,15 @@ CREATE INDEX idx_siren_date ON bilans(siren, date_cloture DESC);
 - [ ] **1.3** Créer `build_rne_db.py` — Script de construction de la base SQLite
   - Peut fonctionner depuis le cache existant (1094 fichiers) OU depuis le FTP
   - Extrait les 6 métriques (FA, HN, GC, BJ, DL, HY) avec m1 et m2
-  - Filtre : ne garder que les bilans des 5 dernières années
+  - Filtre : ne garder que les bilans depuis 2019 (~7 ans)
+  - Streaming : lit chaque JSON en mémoire, INSERT dans SQLite, libère la mémoire
+  - Aucun fichier JSON intermédiaire sauvé sur disque
   - Conversion des montants (suppression zéros, détection centimes)
   - Progression affichée + résumé final
 - [ ] **1.4** Créer `enrichment.py` — Module d'enrichissement unique et simplifié
   - `enrich(siren)` → données DINUM + finances SQLite
   - `enrich_batch(sirens)` → traitement par lot
-  - `get_finances(siren, years=5)` → finances seules depuis SQLite
+  - `get_finances(siren, years=7)` → finances seules depuis SQLite (depuis 2019)
   - Identifiants via `.env` (python-dotenv)
 - [ ] **1.5** Créer `update_rne_db.py` — Script de mise à jour trimestrielle
   - Détecte automatiquement le nom du ZIP le plus récent sur le FTP
