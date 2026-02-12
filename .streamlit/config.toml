@@ -1,0 +1,11 @@
+[server]
+# Augmenter les timeouts pour éviter AxiosError: Network Error
+maxUploadSize = 500
+maxMessageSize = 500
+enableXsrfProtection = true
+
+# Ping WebSocket plus fréquent pour maintenir la connexion
+enableWebsocketCompression = false
+
+[browser]
+gatherUsageStats = false

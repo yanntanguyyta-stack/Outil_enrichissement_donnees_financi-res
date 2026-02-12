@@ -194,6 +194,9 @@ def extract_financial_info(company_data, original_siret=None, rne_data=None):
     nb_exercices_rne = 0
     source_finances = "N/A"
     
+    # Historique financier par année (depuis 2019)
+    historical_data = {}
+    
     # Priorité aux données RNE si disponibles
     if rne_data and rne_data.get("success"):
         bilans = rne_data.get("bilans", [])
@@ -201,12 +204,27 @@ def extract_financial_info(company_data, original_siret=None, rne_data=None):
             # Prendre le bilan le plus récent
             latest_bilan = bilans[0]
             annee_finance = latest_bilan.get("date_cloture", "N/A")
-            ca = latest_bilan.get("chiffre_affaires"
-, "N/A")
+            ca = latest_bilan.get("chiffre_affaires", "N/A")
             resultat_net = latest_bilan.get("resultat_net", "N/A")
             nb_exercices_rne = len(bilans)
             finances_publiees = "Oui"
             source_finances = f"RNE ({nb_exercices_rne} exercice(s))"
+            
+            # Construire l'historique par année (depuis 2019)
+            for bilan in bilans:
+                date_cloture = bilan.get("date_cloture", "")
+                if date_cloture:
+                    annee = date_cloture[:4] if len(date_cloture) >= 4 else ""
+                    if annee and annee.isdigit() and int(annee) >= 2019:
+                        historical_data[annee] = {
+                            "ca": bilan.get("chiffre_affaires"),
+                            "resultat_net": bilan.get("resultat_net"),
+                            "resultat_exploitation": bilan.get("resultat_exploitation"),
+                            "total_actif": bilan.get("total_actif"),
+                            "capitaux_propres": bilan.get("capitaux_propres"),
+                            "effectif": bilan.get("effectif"),
+                            "date_cloture": date_cloture,
+                        }
     # Sinon, utiliser les données DINUM
     elif finances:
         # L'API retourne un dict avec l'année comme clé: {"2024": {"ca": ..., "resultat_net": ...}}
@@ -309,6 +327,17 @@ def extract_financial_info(company_data, original_siret=None, rne_data=None):
         "Organisme de formation": "Oui" if complements.get("est_organisme_formation") else "Non",
         "Entrepreneur spectacle": "Oui" if complements.get("est_entrepreneur_spectacle") else "Non",
     }
+    
+    # Ajouter les colonnes historiques par année (2019 → année courante)
+    import datetime
+    current_year = datetime.datetime.now().year
+    for year in range(2019, current_year + 1):
+        year_str = str(year)
+        year_data = historical_data.get(year_str, {})
+        info[f"CA {year_str}"] = _format_currency(year_data.get("ca")) if year_data else "N/A"
+        info[f"Résultat net {year_str}"] = _format_currency(year_data.get("resultat_net")) if year_data else "N/A"
+        info[f"Résultat exploitation {year_str}"] = _format_currency(year_data.get("resultat_exploitation")) if year_data else "N/A"
+        info[f"Effectif {year_str}"] = year_data.get("effectif", "N/A") if year_data else "N/A"
     
     return info
 
@@ -573,7 +602,11 @@ with tab_file:
             st.info(f"{len(siret_list)} entrée(s) détectée(s)")
             if st.button("🔍 Lancer la recherche", type="primary", key="btn_file"):
                 results = process_companies(siret_list)
-                display_results(results, section_key="file")
+                st.session_state["results_file"] = results
+            
+            # Afficher les résultats persistés (survivent au rerun des download_button)
+            if "results_file" in st.session_state and st.session_state["results_file"]:
+                display_results(st.session_state["results_file"], section_key="file")
 
 with tab_manual:
     st.markdown("#### Recherche manuelle")
@@ -590,11 +623,15 @@ with tab_manual:
             queries = [l.strip() for l in user_input.split("\n") if l.strip()]
             if queries:
                 results = process_companies(queries)
-                display_results(results, section_key="manual")
+                st.session_state["results_manual"] = results
             else:
                 st.warning("Entrez au moins une entreprise.")
         else:
             st.warning("Entrez au moins une entreprise.")
+    
+    # Afficher les résultats persistés (survivent au rerun des download_button)
+    if "results_manual" in st.session_state and st.session_state["results_manual"]:
+        display_results(st.session_state["results_manual"], section_key="manual")
 
 # ── Sidebar (minimal) ──
 
