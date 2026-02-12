@@ -1,11 +1,18 @@
-# Cache RNE
+# Cache RNE (ancien système)
 rne_cache/
 rne_data/
+
+# Base SQLite RNE
+*.db
 
 # Fichiers volumineux
 stock_comptes_annuels.zip
 *.zip
 rne_siren_index.json
+rne_siren_ranges.json
+
+# Environnement
+.env
 
 # Logs
 *.log
@@ -22,6 +29,7 @@ __pycache__/
 env/
 venv/
 .venv
+.pytest_cache/
 
 # IDE
 .vscode/
