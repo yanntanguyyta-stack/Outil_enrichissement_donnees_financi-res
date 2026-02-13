@@ -92,6 +92,14 @@ FTP_USER=votre_utilisateur
 FTP_PASSWORD=votre_mot_de_passe
 ```
 
+Réglages optionnels pour les quotas API DINUM (imports volumineux) :
+
+```env
+DINUM_API_DELAY_SECONDS=0.8
+DINUM_API_MAX_DELAY_SECONDS=8
+DINUM_IMPORT_MAX_COMPANIES=1500
+```
+
 ---
 
 ## Tests
