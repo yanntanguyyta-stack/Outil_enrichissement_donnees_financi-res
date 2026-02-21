@@ -26,52 +26,201 @@ except ImportError:
     FINANCES_AVAILABLE = False
 
 st.set_page_config(
-    page_title="Recherche Entreprises",
+    page_title="Enrichissement Données Entreprises",
     page_icon="🏢",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded",
 )
 
-# ── Minimalist CSS ──
+# ── Modern CSS ──
 st.markdown("""
 <style>
-    /* Clean, minimal spacing */
-    .block-container { padding-top: 2rem; max-width: 960px; }
+    /* ── Global layout ── */
+    .block-container { padding-top: 1.5rem; max-width: 1100px; }
 
-    /* Subtle header */
+    /* ── App header ── */
     .app-header {
-        padding: 1.2rem 0 0.8rem 0;
-        border-bottom: 2px solid #e0e0e0;
-        margin-bottom: 1.5rem;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        padding: 1.8rem 2rem;
+        border-radius: 16px;
+        margin-bottom: 1.8rem;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
     }
-    .app-header h1 { font-size: 1.6rem; font-weight: 600; margin: 0; color: #1a1a2e; }
-    .app-header p  { font-size: 0.9rem; color: #666; margin: 0.3rem 0 0 0; }
+    .app-header h1 {
+        font-size: 1.8rem;
+        font-weight: 700;
+        margin: 0 0 0.3rem 0;
+        color: #ffffff;
+        letter-spacing: -0.3px;
+    }
+    .app-header p {
+        font-size: 0.9rem;
+        color: rgba(255,255,255,0.7);
+        margin: 0;
+    }
+    .app-header .badge {
+        display: inline-block;
+        background: rgba(255,255,255,0.15);
+        color: rgba(255,255,255,0.9);
+        border-radius: 20px;
+        padding: 0.15rem 0.7rem;
+        font-size: 0.75rem;
+        margin-left: 0.5rem;
+        vertical-align: middle;
+        backdrop-filter: blur(4px);
+    }
 
-    /* Clean buttons */
+    /* ── Section headings ── */
+    .section-heading {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: #1a1a2e;
+        margin: 1.5rem 0 0.8rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+    .section-heading::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(to right, #e0e4f0, transparent);
+        margin-left: 0.5rem;
+    }
+
+    /* ── Source cards ── */
+    .source-card {
+        background: #f8f9fc;
+        border: 1px solid #e4e8f0;
+        border-radius: 12px;
+        padding: 1rem;
+        text-align: center;
+        transition: all 0.2s;
+        cursor: pointer;
+    }
+    .source-card:hover {
+        border-color: #4285F4;
+        box-shadow: 0 2px 12px rgba(66,133,244,0.12);
+        background: #fff;
+    }
+    .source-card.active {
+        border-color: #4285F4;
+        background: #e8f0fe;
+    }
+
+    /* ── Metric cards ── */
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem !important;
+        font-weight: 700 !important;
+        color: #1a1a2e !important;
+    }
+    [data-testid="stMetricLabel"] { font-size: 0.8rem !important; color: #666 !important; }
+    [data-testid="metric-container"] {
+        background: #f8f9fc;
+        border: 1px solid #e4e8f0;
+        border-radius: 12px;
+        padding: 1rem;
+    }
+
+    /* ── Buttons ── */
     .stButton > button {
-        border-radius: 6px;
-        font-weight: 500;
-        padding: 0.5rem 1.5rem;
+        border-radius: 8px;
+        font-weight: 600;
+        padding: 0.55rem 1.5rem;
+        transition: all 0.2s;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #4285F4, #1a73e8);
+        border: none;
+        color: white;
+        box-shadow: 0 2px 8px rgba(66,133,244,0.3);
+    }
+    .stButton > button[kind="primary"]:hover {
+        box-shadow: 0 4px 16px rgba(66,133,244,0.4);
+        transform: translateY(-1px);
     }
 
-    /* Compact metrics */
-    [data-testid="stMetricValue"] { font-size: 1.5rem; font-weight: 600; }
+    /* ── Tabs ── */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px;
+        background: #f0f2f8;
+        padding: 4px;
+        border-radius: 10px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 0.4rem 1rem;
+        font-weight: 500;
+        color: #555;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #ffffff;
+        color: #1a1a2e;
+        box-shadow: 0 1px 6px rgba(0,0,0,0.1);
+    }
 
-    /* Remove sidebar shadow */
-    [data-testid="stSidebar"] { background: #fafafa; }
-    
-    /* Info boxes styling */
-    .stAlert { margin-top: 0.5rem; margin-bottom: 0.5rem; }
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    }
+    [data-testid="stSidebar"] * { color: rgba(255,255,255,0.85) !important; }
+    [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.15) !important; }
+    .user-avatar {
+        width: 40px; height: 40px; border-radius: 50%;
+        border: 2px solid rgba(255,255,255,0.4);
+    }
+
+    /* ── Data table ── */
+    [data-testid="stDataFrame"] {
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #e4e8f0;
+    }
+
+    /* ── Alerts ── */
+    .stAlert { border-radius: 10px !important; margin: 0.4rem 0 !important; }
+
+    /* ── Upload box ── */
+    [data-testid="stFileUploadDropzone"] {
+        border-radius: 12px !important;
+        border: 2px dashed #c4cce0 !important;
+        background: #f8f9fc !important;
+    }
+    [data-testid="stFileUploadDropzone"]:hover {
+        border-color: #4285F4 !important;
+        background: #e8f0fe !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Authentication ──
+try:
+    from auth import require_auth, logout, get_current_user
+    _current_user = require_auth()
+    if _current_user is None:
+        st.stop()
+except ImportError:
+    _current_user = {"email": "dev@local", "name": "Mode local"}
+
 # ── Header ──
-st.markdown("""
-<div class="app-header">
-    <h1>🏢 Recherche d'Entreprises</h1>
-    <p>Données officielles — API DINUM &amp; RNE / INPI</p>
-</div>
-""", unsafe_allow_html=True)
+_db_badge = ""
+if FINANCES_AVAILABLE and db_available():
+    _db_age = db_age_days()
+    _db_badge = (
+        f'<span class="badge">📊 RNE {_db_age}j</span>'
+        if _db_age is not None
+        else '<span class="badge">📊 RNE ✓</span>'
+    )
+
+st.markdown(
+    f"""
+    <div class="app-header">
+        <h1>🏢 Enrichissement Données Entreprises {_db_badge}</h1>
+        <p>Données officielles — API DINUM &amp; RNE / INPI · Connecté&nbsp;: {_current_user.get("name", "")}</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # API configuration
 USE_API = True
@@ -906,7 +1055,7 @@ def create_download_button(df, file_format, key_suffix=""):
 
 
 def display_results(results, section_key=""):
-    """Display results in a clean, minimal layout."""
+    """Display results in a modern card layout."""
     if not results:
         st.info("Aucun résultat.")
         return
@@ -919,15 +1068,16 @@ def display_results(results, section_key=""):
     not_found = len(results) - verified
     with_finances = sum(1 for r in results if r.get("Données financières publiées") == "Oui")
 
-    # Compact summary row
+    # Metric summary row
     st.markdown("---")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Trouvées", verified)
-    c2.metric("Avec finances", with_finances)
-    c3.metric("Non trouvées", not_found)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("📊 Total traité", len(results))
+    c2.metric("✅ Trouvées", verified)
+    c3.metric("💰 Avec finances", with_finances)
+    c4.metric("❌ Non trouvées", not_found)
 
     # Data table
-    st.dataframe(df, use_container_width=True, height=min(400, 60 + len(results) * 35))
+    st.dataframe(df, use_container_width=True, height=min(420, 60 + len(results) * 35))
 
     # Download row
     col_a, col_b = st.columns(2)
@@ -941,7 +1091,7 @@ def display_results(results, section_key=""):
 # ── Main UI ──────────────────────────────────────────
 
 # Section 1: Import de données
-st.markdown("### 📥 Import de données")
+st.markdown('<div class="section-heading">📥 Import de données</div>', unsafe_allow_html=True)
 
 # Onglets pour choix du mode d'entrée
 input_tab1, input_tab2, input_tab3 = st.tabs(["📁 Fichier", "🔎 Recherche directe", "🎯 Filtres DINUM"])
@@ -1204,7 +1354,7 @@ with input_tab3:
 
 # Section 2: Choix de la source de données
 st.markdown("---")
-st.markdown("### ⚙️ Source des données")
+st.markdown('<div class="section-heading">⚙️ Source des données</div>', unsafe_allow_html=True)
 
 # Vérifier la disponibilité de Pappers
 try:
@@ -1270,20 +1420,37 @@ elif not queries_to_process:
 elif "data_source" not in st.session_state:
     st.info("⚙️ Sélectionnez une source de données")
 
-# ── Sidebar (minimal) ──
+# ── Sidebar ──
 
 with st.sidebar:
-    st.markdown("### ℹ️ À propos")
-    st.caption("Outil d'enrichissement de données d'entreprises françaises")
+    # ── User info ──
+    _user_name = _current_user.get("name", "Utilisateur")
+    _user_email = _current_user.get("email", "")
+    _user_pic = _current_user.get("picture", "")
+
+    if _user_pic:
+        st.markdown(
+            f'<img src="{_user_pic}" class="user-avatar" />', unsafe_allow_html=True
+        )
+    st.markdown(f"**{_user_name}**")
+    if _user_email and _user_email != "dev@local":
+        st.caption(_user_email)
+
+    try:
+        from auth import logout as _do_logout, _AUTH_ENABLED
+        if _AUTH_ENABLED and st.button("🚪 Se déconnecter", use_container_width=True, key="btn_logout"):
+            _do_logout()
+    except ImportError:
+        pass
 
     st.markdown("---")
     st.markdown("### 📊 Sources de données")
-    
+
     # DINUM (toujours disponible)
     st.markdown("**🏛️ DINUM**")
     st.caption("✅ API officielle de l'État")
-    st.caption("→ Données d'identification et légales")
-    
+    st.caption("→ Identification & données légales")
+
     # RNE (base locale)
     st.markdown("**📊 RNE / INPI**")
     if FINANCES_AVAILABLE and db_available():
@@ -1298,14 +1465,14 @@ with st.sidebar:
     else:
         st.caption("❌ Base non disponible")
         st.caption("→ Exécutez `python build_rne_db.py`")
-    
+
     # Pappers
     st.markdown("**💰 Pappers.fr**")
     try:
         from enrichment_pappers import check_api_key, SCRAPING_ENABLED
         has_api = check_api_key()
         has_scraping = SCRAPING_ENABLED
-        
+
         if has_api:
             st.caption("✅ API configurée")
             st.caption("→ Enrichissement complet disponible")
@@ -1320,7 +1487,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### ⏱️ Cadence API")
-    current_delay = float(st.session_state.get("api_current_delay", API_DELAY_SECONDS)) if "api_current_delay" in st.session_state else API_DELAY_SECONDS
+    current_delay = (
+        float(st.session_state.get("api_current_delay", API_DELAY_SECONDS))
+        if "api_current_delay" in st.session_state
+        else API_DELAY_SECONDS
+    )
     st.caption(f"Délai de base : {API_DELAY_SECONDS:.2f}s")
     st.caption(f"Délai actuel : {current_delay:.2f}s")
     st.caption(f"Limite import : {API_IMPORT_MAX_COMPANIES} lignes")
