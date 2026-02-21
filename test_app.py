@@ -13,12 +13,14 @@ def _import_app():
     mock_st.set_page_config = MagicMock()
     mock_st.title = MagicMock()
     mock_st.markdown = MagicMock()
-    mock_st.tabs = MagicMock(return_value=[MagicMock(), MagicMock()])
     mock_st.sidebar = MagicMock()
     mock_st.sidebar.__enter__ = MagicMock(return_value=mock_st.sidebar)
     mock_st.sidebar.__exit__ = MagicMock(return_value=False)
-    mock_st.file_uploader = MagicMock(return_value=None)
     mock_st.text_area = MagicMock(return_value="")
+    mock_st.text_input = MagicMock(return_value="")
+    mock_st.number_input = MagicMock(return_value=0)
+    mock_st.multiselect = MagicMock(return_value=[])
+    mock_st.file_uploader = MagicMock(return_value=None)
     mock_st.button = MagicMock(return_value=False)
     mock_st.spinner = MagicMock()
     mock_st.spinner.return_value.__enter__ = MagicMock()
@@ -26,23 +28,31 @@ def _import_app():
     mock_st.expander = MagicMock()
     mock_st.expander.return_value.__enter__ = MagicMock()
     mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
-    mock_st.columns = MagicMock(return_value=[MagicMock(), MagicMock()])
-    # Make tabs return context managers
-    tab1, tab2 = MagicMock(), MagicMock()
-    tab1.__enter__ = MagicMock(return_value=tab1)
-    tab1.__exit__ = MagicMock(return_value=False)
-    tab2.__enter__ = MagicMock(return_value=tab2)
-    tab2.__exit__ = MagicMock(return_value=False)
-    mock_st.tabs = MagicMock(return_value=[tab1, tab2])
-    # col context managers
-    col1, col2 = MagicMock(), MagicMock()
-    col1.__enter__ = MagicMock(return_value=col1)
-    col1.__exit__ = MagicMock(return_value=False)
-    col2.__enter__ = MagicMock(return_value=col2)
-    col2.__exit__ = MagicMock(return_value=False)
-    mock_st.columns = MagicMock(return_value=[col1, col2])
+    # Make tabs return 3 context managers (matching the 3 tabs in app.py)
+    tab1, tab2, tab3 = MagicMock(), MagicMock(), MagicMock()
+    for tab in (tab1, tab2, tab3):
+        tab.__enter__ = MagicMock(return_value=tab)
+        tab.__exit__ = MagicMock(return_value=False)
+    mock_st.tabs = MagicMock(return_value=[tab1, tab2, tab3])
+    # col context managers — dynamic: return n mocked cols based on argument
+    def _make_cols(n_or_list):
+        n = n_or_list if isinstance(n_or_list, int) else len(n_or_list)
+        cols = [MagicMock() for _ in range(n)]
+        for col in cols:
+            col.__enter__ = MagicMock(return_value=col)
+            col.__exit__ = MagicMock(return_value=False)
+        return cols
+    mock_st.columns = MagicMock(side_effect=_make_cols)
+    # session_state
+    mock_st.session_state = {}
+    mock_st.secrets = {}
 
-    with patch.dict(sys.modules, {'streamlit': mock_st}):
+    # Mock auth module so app.py does not trigger the login page
+    mock_auth = MagicMock()
+    mock_auth.require_auth.return_value = {"email": "test@test.com", "name": "Test User", "picture": ""}
+    mock_auth._AUTH_ENABLED = False
+
+    with patch.dict(sys.modules, {'streamlit': mock_st, 'auth': mock_auth}):
         if 'app' in sys.modules:
             del sys.modules['app']
         import app

@@ -15,8 +15,13 @@ stock_comptes_annuels.zip
 rne_siren_index.json
 rne_siren_ranges.json
 
-# Environnement
+# Environnement et secrets
 .env
+.streamlit/secrets.toml
+
+# Compte de service Google (ne jamais committer)
+service_account*.json
+*-service-account.json
 
 # Logs
 *.log
